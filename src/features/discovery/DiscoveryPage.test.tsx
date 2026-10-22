@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DiscoveryPage } from './DiscoveryPage'
 
 const PORTRAIT_ARTWORK =
@@ -267,7 +267,7 @@ const OPTIONAL_METADATA_FIXTURE = {
             release_title: 'Discovery (Deluxe Edition)',
             artists: [],
             release_date: '2001-02-26',
-            album_type: 'album',
+            album_type: 'single',
             spotify_album_id: '2noRn2Aes5aoNVsU6iWThc',
             spotify_url: 'https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc',
             cover_url: null,
@@ -357,11 +357,26 @@ const server = setupServer(
   }),
 )
 
+const originalScrollYDescriptor = Object.getOwnPropertyDescriptor(window, 'scrollY')
+
+const setPageScrollY = (scrollY: number) => {
+  Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY })
+}
+
+const openDetails = async (user: UserEvent, cardName: string) => {
+  await user.click(screen.getByRole('button', { name: cardName }))
+  return screen.getByRole('dialog', { name: 'Details' })
+}
+
 const submitSourceVideo = async (user: UserEvent) => {
   await user.type(screen.getByLabelText('Video URL'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
   await user.click(screen.getByRole('button', { name: 'Discover' }))
 }
 
+
+beforeEach(() => {
+  vi.stubGlobal('scrollTo', vi.fn())
+})
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' })
 })
@@ -369,6 +384,12 @@ beforeAll(() => {
 afterEach(() => {
   extractionRequests.length = 0
   server.resetHandlers()
+  document.body.style.cssText = ''
+  if (originalScrollYDescriptor === undefined) {
+    Reflect.deleteProperty(window, 'scrollY')
+  } else {
+    Object.defineProperty(window, 'scrollY', originalScrollYDescriptor)
+  }
   vi.unstubAllGlobals()
 })
 
@@ -565,18 +586,22 @@ describe('DiscoveryPage', () => {
     expect(within(resultRegion).getByText('YouTube')).toBeInTheDocument()
   })
 
-  it('should render every resolved card variant when the visitor switches media categories', async () => {
+  it('should expose complete accessible card names and visible screen metadata when the visitor switches media categories', async () => {
     const user = userEvent.setup()
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    expect(await screen.findByRole('heading', { name: 'Dune: Part One' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'The Last of Us' })).toBeInTheDocument()
-    expect(screen.getByText('2021')).toBeInTheDocument()
-    expect(screen.getByLabelText('Score 7.8')).toHaveTextContent('7.8')
-    expect(screen.getByLabelText('Score 8.7')).toHaveTextContent('8.7')
-    expect(screen.queryByText(/TMDB/u)).not.toBeInTheDocument()
+    const duneCard = await screen.findByRole('button', {
+      name: 'Dune: Part One, 2021, score 7.8, open details',
+    })
+    const lastOfUsCard = screen.getByRole('button', {
+      name: 'The Last of Us, 2023 to 2025, score 8.7, open details',
+    })
+    expect(within(duneCard).getByText('2021')).toBeInTheDocument()
+    expect(within(duneCard).getByText('·')).toHaveAttribute('aria-hidden', 'true')
+    expect(within(duneCard).getByLabelText('Score 7.8')).toHaveTextContent('7.8')
+    expect(within(lastOfUsCard).getByLabelText('Score 8.7')).toHaveTextContent('8.7')
     expect(screen.queryByText('Movie')).not.toBeInTheDocument()
     expect(screen.queryByText('TV series')).not.toBeInTheDocument()
     expect(screen.getByAltText('Artwork for Dune: Part One')).toBeInTheDocument()
@@ -584,8 +609,16 @@ describe('DiscoveryPage', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Music, 2 results' }))
 
-    expect(screen.getByRole('heading', { name: 'One More Time (2011 Remaster)' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Discovery (Deluxe Edition)' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'One More Time (2011 Remaster), Daft Punk, open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Discovery (Deluxe Edition), Daft Punk, open details',
+      }),
+    ).toBeInTheDocument()
     expect(screen.queryByText('Track')).not.toBeInTheDocument()
     expect(screen.queryByText('Album')).not.toBeInTheDocument()
     expect(screen.getByAltText('Artwork for One More Time (2011 Remaster)')).toBeInTheDocument()
@@ -593,24 +626,46 @@ describe('DiscoveryPage', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Books, 1 results' }))
 
-    expect(screen.getByRole('heading', { name: 'Pride and Prejudice' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Pride and Prejudice, Jane Austen, open details' }),
+    ).toBeInTheDocument()
     expect(screen.getByText('Jane Austen')).toBeInTheDocument()
     expect(screen.queryByText('Book')).not.toBeInTheDocument()
     expect(screen.getByAltText('Artwork for Pride and Prejudice')).toBeInTheDocument()
   })
 
-  it('should show every unresolved mention field when the Unknown category is selected', async () => {
+  it('should expose every unresolved mention field when the Unknown category is selected', async () => {
     const user = userEvent.setup()
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
     await user.click(screen.getByRole('tab', { name: 'Unknown, 5 results' }))
 
-    expect(screen.getByRole('heading', { name: 'Unidentified Movie' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Unidentified TV Series' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Unidentified Track' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Unidentified Release' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Unidentified Book' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Unidentified Movie, Movie, year 2024, Not identified, open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Unidentified TV Series, TV series, year 2024, Not identified, open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Unidentified Track, Track, artists Unknown Artist, release Lost Sessions, release year 1998, Not identified, open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Unidentified Release, Music release, artists Unknown Artist, release year 1999, Not identified, open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Unidentified Book, Book, authors Unknown Author, Not identified, open details',
+      }),
+    ).toBeInTheDocument()
     expect(screen.getAllByText('Not identified')).toHaveLength(5)
     expect(screen.getByText('Movie')).toBeInTheDocument()
     expect(screen.getByText('TV series')).toBeInTheDocument()
@@ -628,7 +683,7 @@ describe('DiscoveryPage', () => {
     ).toHaveLength(5)
   })
 
-  it('should keep resolved results categorized when their optional provider metadata is absent', async () => {
+  it('should keep resolved results categorized when optional provider metadata is absent', async () => {
     const user = userEvent.setup()
 
     server.use(http.post('/api/extractions', () => HttpResponse.json(OPTIONAL_METADATA_FIXTURE)))
@@ -636,15 +691,29 @@ describe('DiscoveryPage', () => {
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    expect(await screen.findByRole('heading', { name: 'Dune: Part One' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'The Last of Us' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Dune: Part One, 2021, score 7.8, open details' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'The Last of Us, 2023, score 8.7, open details',
+      }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'No artwork available for Dune: Part One' })).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'No artwork available for The Last of Us' })).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: 'Music, 2 results' }))
 
-    expect(screen.getByRole('heading', { name: 'One More Time (2011 Remaster)' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Discovery (Deluxe Edition)' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'One More Time (2011 Remaster), open details',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'Discovery (Deluxe Edition), open details',
+      }),
+    ).toBeInTheDocument()
     expect(
       screen.getByRole('img', { name: 'No artwork available for One More Time (2011 Remaster)' }),
     ).toBeInTheDocument()
@@ -654,7 +723,9 @@ describe('DiscoveryPage', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Books, 1 results' }))
 
-    expect(screen.getByRole('heading', { name: 'Pride and Prejudice' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Pride and Prejudice, open details' }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'No artwork available for Pride and Prejudice' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Unknown' })).toBeDisabled()
   })
@@ -669,13 +740,320 @@ describe('DiscoveryPage', () => {
     fireEvent.error(image)
 
     expect(await screen.findByRole('img', { name: 'No artwork available for Dune: Part One' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Dune: Part One' })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Dune: Part One, 2021, score 7.8, open details' }),
+    ).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Movies & TV, 2 results' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
   })
 
+  it('should render every resolved drawer variant with its provider-backed fields when a card opens', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const movieDrawer = await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    expect(movieDrawer).toHaveAttribute('aria-modal', 'true')
+    expect(within(movieDrawer).getByRole('heading', { name: 'Dune: Part One' })).toBeInTheDocument()
+    expect(within(movieDrawer).getByText('2021')).toBeInTheDocument()
+    expect(within(movieDrawer).getByLabelText('Score 7.8')).toHaveTextContent('7.8')
+    expect(
+      within(movieDrawer).getByText('Paul Atreides faces his destiny on Arrakis.'),
+    ).toBeInTheDocument()
+    expect(within(movieDrawer).getByText('Directors')).toBeInTheDocument()
+    expect(within(movieDrawer).getByText('Denis Villeneuve')).toBeInTheDocument()
+    const tmdbLink = within(movieDrawer).getByRole('link', { name: 'Open TMDB' })
+    expect(tmdbLink).toHaveAttribute('href', 'https://www.themoviedb.org/movie/438631')
+    expect(tmdbLink).toHaveAttribute('target', '_blank')
+    expect(tmdbLink).toHaveAttribute('rel', 'noreferrer')
+    expect(within(movieDrawer).getByRole('link', { name: 'Open IMDb' })).toHaveAttribute(
+      'href',
+      'https://www.imdb.com/title/tt1160419/',
+    )
+    await user.click(within(movieDrawer).getByRole('button', { name: 'Close details' }))
+
+    const tvDrawer = await openDetails(
+      user,
+      'The Last of Us, 2023 to 2025, score 8.7, open details',
+    )
+    expect(within(tvDrawer).getByText('2023–2025')).toBeInTheDocument()
+    expect(within(tvDrawer).getByLabelText('Score 8.7')).toHaveTextContent('8.7')
+    expect(
+      within(tvDrawer).getByText('A smuggler escorts a teenager across a ruined America.'),
+    ).toBeInTheDocument()
+    expect(within(tvDrawer).getByText('Creators')).toBeInTheDocument()
+    expect(within(tvDrawer).getByText('Craig Mazin, Neil Druckmann')).toBeInTheDocument()
+    expect(within(tvDrawer).getByRole('link', { name: 'Open TMDB' })).toHaveAttribute(
+      'href',
+      'https://www.themoviedb.org/tv/100088',
+    )
+    expect(within(tvDrawer).getByRole('link', { name: 'Open IMDb' })).toHaveAttribute(
+      'href',
+      'https://www.imdb.com/title/tt3581920/',
+    )
+    await user.click(within(tvDrawer).getByRole('button', { name: 'Close details' }))
+
+    await user.click(screen.getByRole('tab', { name: 'Music, 2 results' }))
+    const trackDrawer = await openDetails(
+      user,
+      'One More Time (2011 Remaster), Daft Punk, open details',
+    )
+    expect(within(trackDrawer).getByText('Album')).toBeInTheDocument()
+    expect(within(trackDrawer).getByText('Discovery (Deluxe Edition)')).toBeInTheDocument()
+    expect(within(trackDrawer).getByText('Artists')).toBeInTheDocument()
+    expect(within(trackDrawer).getByText('Daft Punk')).toBeInTheDocument()
+    expect(within(trackDrawer).getByRole('link', { name: 'Open Spotify' })).toHaveAttribute(
+      'href',
+      'https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV',
+    )
+    await user.click(within(trackDrawer).getByRole('button', { name: 'Close details' }))
+
+    const releaseDrawer = await openDetails(
+      user,
+      'Discovery (Deluxe Edition), Daft Punk, open details',
+    )
+    expect(within(releaseDrawer).getByText('Release type')).toBeInTheDocument()
+    expect(within(releaseDrawer).getByText('Album')).toBeInTheDocument()
+    expect(within(releaseDrawer).getByText('Release date')).toBeInTheDocument()
+    expect(within(releaseDrawer).getByText('February 26, 2001')).toBeInTheDocument()
+    expect(within(releaseDrawer).getByRole('link', { name: 'Open Spotify' })).toHaveAttribute(
+      'href',
+      'https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc',
+    )
+    await user.click(within(releaseDrawer).getByRole('button', { name: 'Close details' }))
+
+    await user.click(screen.getByRole('tab', { name: 'Books, 1 results' }))
+    const bookDrawer = await openDetails(user, 'Pride and Prejudice, Jane Austen, open details')
+    expect(within(bookDrawer).getByText('Authors')).toBeInTheDocument()
+    expect(within(bookDrawer).getByText('Jane Austen')).toBeInTheDocument()
+    expect(within(bookDrawer).getByText('Publishers')).toBeInTheDocument()
+    expect(within(bookDrawer).getByText('T. Egerton')).toBeInTheDocument()
+    expect(within(bookDrawer).getByRole('link', { name: 'Open Open Library' })).toHaveAttribute(
+      'href',
+      'https://openlibrary.org/works/OL66554W',
+    )
+    await user.click(within(bookDrawer).getByRole('button', { name: 'Close details' }))
+  })
+
+  it('should render only available unknown mention fields when each unresolved card opens', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+    await user.click(screen.getByRole('tab', { name: 'Unknown, 5 results' }))
+
+    const unknownCases = [
+      {
+        cardName: 'Unidentified Movie, Movie, year 2024, Not identified, open details',
+        classification: 'Movie',
+        availableRows: [
+          ['Original classification', 'Movie'],
+          ['Year', '2024'],
+        ],
+        unavailableRows: ['Artists', 'Release', 'Release year', 'Authors'],
+      },
+      {
+        cardName: 'Unidentified TV Series, TV series, year 2024, Not identified, open details',
+        classification: 'TV series',
+        availableRows: [
+          ['Original classification', 'TV series'],
+          ['Year', '2024'],
+        ],
+        unavailableRows: ['Artists', 'Release', 'Release year', 'Authors'],
+      },
+      {
+        cardName:
+          'Unidentified Track, Track, artists Unknown Artist, release Lost Sessions, release year 1998, Not identified, open details',
+        classification: 'Track',
+        availableRows: [
+          ['Original classification', 'Track'],
+          ['Artists', 'Unknown Artist'],
+          ['Release', 'Lost Sessions'],
+          ['Release year', '1998'],
+        ],
+        unavailableRows: ['Year', 'Authors'],
+      },
+      {
+        cardName:
+          'Unidentified Release, Music release, artists Unknown Artist, release year 1999, Not identified, open details',
+        classification: 'Music release',
+        availableRows: [
+          ['Original classification', 'Music release'],
+          ['Artists', 'Unknown Artist'],
+          ['Release year', '1999'],
+        ],
+        unavailableRows: ['Year', 'Release', 'Authors'],
+      },
+      {
+        cardName: 'Unidentified Book, Book, authors Unknown Author, Not identified, open details',
+        classification: 'Book',
+        availableRows: [
+          ['Original classification', 'Book'],
+          ['Authors', 'Unknown Author'],
+        ],
+        unavailableRows: ['Year', 'Artists', 'Release', 'Release year'],
+      },
+    ]
+
+    for (const unknownCase of unknownCases) {
+      const drawer = await openDetails(user, unknownCase.cardName)
+      expect(within(drawer).getByText('Not identified')).toBeInTheDocument()
+      expect(within(drawer).getByText(unknownCase.classification)).toBeInTheDocument()
+      expect(
+        within(drawer).getByText(
+          'Reelio heard this mention but couldn’t match it to a catalog result.',
+        ),
+      ).toBeInTheDocument()
+      expect(within(drawer).queryByRole('link')).not.toBeInTheDocument()
+
+      for (const [label, value] of unknownCase.availableRows) {
+        expect(within(drawer).getByText(label, { selector: 'dt' })).toBeInTheDocument()
+        expect(within(drawer).getByText(value, { selector: 'dd' })).toBeInTheDocument()
+      }
+
+      for (const label of unknownCase.unavailableRows) {
+        expect(within(drawer).queryByText(label, { selector: 'dt' })).not.toBeInTheDocument()
+      }
+
+      await user.click(within(drawer).getByRole('button', { name: 'Close details' }))
+    }
+  })
+
+  it('should omit empty optional rows and links when provider metadata is unavailable', async () => {
+    const user = userEvent.setup()
+
+    server.use(http.post('/api/extractions', () => HttpResponse.json(OPTIONAL_METADATA_FIXTURE)))
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const movieDrawer = await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    expect(
+      within(movieDrawer).getByRole('img', { name: 'No artwork available for Dune: Part One' }),
+    ).toBeInTheDocument()
+    expect(within(movieDrawer).queryByText('Directors', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(movieDrawer).queryByRole('link', { name: 'Open IMDb' })).not.toBeInTheDocument()
+    expect(within(movieDrawer).getByRole('link', { name: 'Open TMDB' })).toBeInTheDocument()
+    await user.click(within(movieDrawer).getByRole('button', { name: 'Close details' }))
+
+    const tvDrawer = await openDetails(user, 'The Last of Us, 2023, score 8.7, open details')
+    expect(within(tvDrawer).queryByText('Creators', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(tvDrawer).queryByRole('link', { name: 'Open IMDb' })).not.toBeInTheDocument()
+    expect(within(tvDrawer).getByRole('link', { name: 'Open TMDB' })).toBeInTheDocument()
+    await user.click(within(tvDrawer).getByRole('button', { name: 'Close details' }))
+
+    await user.click(screen.getByRole('tab', { name: 'Music, 2 results' }))
+    const trackDrawer = await openDetails(user, 'One More Time (2011 Remaster), open details')
+    expect(within(trackDrawer).queryByText('Artists', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(trackDrawer).getByText('Release type')).toBeInTheDocument()
+    expect(within(trackDrawer).getByText('Single')).toBeInTheDocument()
+    expect(within(trackDrawer).queryByText('Album', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(trackDrawer).getByRole('link', { name: 'Open Spotify' })).toBeInTheDocument()
+    await user.click(within(trackDrawer).getByRole('button', { name: 'Close details' }))
+
+    const releaseDrawer = await openDetails(user, 'Discovery (Deluxe Edition), open details')
+    expect(within(releaseDrawer).queryByText('Artists', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(releaseDrawer).getByRole('link', { name: 'Open Spotify' })).toBeInTheDocument()
+    await user.click(within(releaseDrawer).getByRole('button', { name: 'Close details' }))
+
+    await user.click(screen.getByRole('tab', { name: 'Books, 1 results' }))
+    const bookDrawer = await openDetails(user, 'Pride and Prejudice, open details')
+    expect(within(bookDrawer).queryByText('Authors', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(bookDrawer).queryByText('Publishers', { selector: 'dt' })).not.toBeInTheDocument()
+    expect(within(bookDrawer).getByRole('link', { name: 'Open Open Library' })).toBeInTheDocument()
+    await user.click(within(bookDrawer).getByRole('button', { name: 'Close details' }))
+  })
+
+  it('should replace failed drawer artwork without changing the selected category when its image errors', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const drawer = await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    fireEvent.error(within(drawer).getByAltText('Artwork for Dune: Part One'))
+
+    expect(
+      within(drawer).getByRole('img', { name: 'No artwork available for Dune: Part One' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Details' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Movies & TV, 2 results' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await user.click(within(drawer).getByRole('button', { name: 'Close details' }))
+  })
+
+  it('should trap focus and restore page state when details closes with Escape', async () => {
+    const user = userEvent.setup()
+    document.body.style.overflow = 'clip'
+    document.body.style.position = 'relative'
+    document.body.style.top = '13px'
+    document.body.style.width = '90%'
+    document.body.style.paddingRight = '4px'
+    setPageScrollY(360)
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const duneCard = await screen.findByRole('button', {
+      name: 'Dune: Part One, 2021, score 7.8, open details',
+    })
+    const drawer = await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    const closeButton = within(drawer).getByRole('button', { name: 'Close details' })
+    const imdbLink = within(drawer).getByRole('link', { name: 'Open IMDb' })
+
+    expect(closeButton).toHaveFocus()
+    await user.keyboard('{Shift>}{Tab}{/Shift}')
+    expect(imdbLink).toHaveFocus()
+    await user.keyboard('{Tab}')
+    expect(closeButton).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog', { name: 'Details' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(duneCard).toHaveFocus()
+      expect(window.scrollTo).toHaveBeenLastCalledWith(0, 360)
+    })
+    expect(screen.getByRole('tab', { name: 'Movies & TV, 2 results' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    expect(document.body.style.overflow).toBe('clip')
+    expect(document.body.style.position).toBe('relative')
+    expect(document.body.style.top).toBe('13px')
+    expect(document.body.style.width).toBe('90%')
+    expect(document.body.style.paddingRight).toBe('4px')
+  })
+
+  it('should dismiss details from the close control and scrim when either is activated', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const duneCard = await screen.findByRole('button', {
+      name: 'Dune: Part One, 2021, score 7.8, open details',
+    })
+    const drawer = await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    await user.click(within(drawer).getByRole('button', { name: 'Close details' }))
+    expect(screen.queryByRole('dialog', { name: 'Details' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(duneCard).toHaveFocus()
+    })
+
+    await openDetails(user, 'Dune: Part One, 2021, score 7.8, open details')
+    fireEvent.pointerDown(screen.getByTestId('detail-drawer-scrim'))
+
+    expect(screen.queryByRole('dialog', { name: 'Details' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(duneCard).toHaveFocus()
+    })
+  })
   it('should skip disabled tabs and wrap keyboard navigation when only Movies and Unknown have results', async () => {
     const user = userEvent.setup()
 

@@ -26,10 +26,10 @@ const SourceVideoSummaryCard = ({ sourceVideo }: SourceVideoSummaryCardProps) =>
 
   return (
     <section className="source-video-summary" aria-labelledby="source-video-summary-heading">
-      <div className="source-video-summary__content">
+      <div className="source-video-summary_content">
         <h2 id="source-video-summary-heading">
           <a
-            className="source-video-summary__title-link"
+            className="source-video-summary_title-link"
             href={sourceVideo.canonicalUrl}
             target="_blank"
             rel="noreferrer"
@@ -37,7 +37,7 @@ const SourceVideoSummaryCard = ({ sourceVideo }: SourceVideoSummaryCardProps) =>
             {title}
           </a>
         </h2>
-        <div className="source-video-summary__metadata">
+        <div className="source-video-summary_metadata">
           <span>{sourceVideo.platformLabel}</span>
         </div>
       </div>
@@ -114,7 +114,7 @@ export const DiscoveryPage = () => {
   return (
     <div className="discovery-page">
       <header className="site-header">
-        <div className="page-wrap site-header__content">
+        <div className="page-wrap site-header_content">
           <div className="wordmark">
             Reel<span>io</span>
           </div>
@@ -128,11 +128,11 @@ export const DiscoveryPage = () => {
         <section className="hero" aria-labelledby="discovery-heading">
           <div className="page-wrap">
             <h1 id="discovery-heading">Discover what’s mentioned.</h1>
-            <p className="hero__description">
+            <p className="hero_description">
               Find movies, TV series, music, and books mentioned in public social videos.
             </p>
             <form className="discovery-form" noValidate onSubmit={handleSubmit}>
-              <div className="discovery-form__field">
+              <div className="discovery-form_field">
                 <label htmlFor="source-video-url">Video URL</label>
                 <input
                   ref={inputRef}
@@ -150,7 +150,7 @@ export const DiscoveryPage = () => {
                   }
                   aria-invalid={guidance === undefined ? undefined : true}
                 />
-                <p id="source-video-url-support" className="discovery-form__support">
+                <p id="source-video-url-support" className="discovery-form_support">
                   Paste a public YouTube, Instagram, Facebook, TikTok, or X video link.
                 </p>
               </div>
@@ -159,7 +159,7 @@ export const DiscoveryPage = () => {
               </button>
             </form>
             {guidance === undefined ? null : (
-              <p id={guidanceId} className="discovery-form__guidance" role="alert">
+              <p id={guidanceId} className="discovery-form_guidance" role="alert">
                 {guidance}
               </p>
             )}
@@ -168,7 +168,7 @@ export const DiscoveryPage = () => {
 
         <section className="page-wrap discovery-result" aria-label="Discovery result" aria-live="polite">
           {discoveryState.status === 'loading' ? (
-            <p className="discovery-result__status" role="status">
+            <p className="discovery-result_status" role="status">
               Finding what’s mentioned
               <span className="loading-dots" aria-hidden="true">
                 <span>.</span>
@@ -187,7 +187,7 @@ export const DiscoveryPage = () => {
                   onSelectCategory={handleSelectCategory}
                 />
               ) : (
-                <section className="discovery-result__empty" aria-labelledby="empty-discovery-heading">
+                <section className="discovery-result_empty" aria-labelledby="empty-discovery-heading">
                   <h2 id="empty-discovery-heading">We didn’t find anything</h2>
                   <p>
                     No movies, shows, music, or books were mentioned in this video. Try another
@@ -198,7 +198,7 @@ export const DiscoveryPage = () => {
             </>
           ) : null}
           {discoveryState.status === 'failure' ? (
-            <p className="discovery-result__failure" role="alert">
+            <p className="discovery-result_failure" role="alert">
               {discoveryState.message}
             </p>
           ) : null}
@@ -210,9 +210,9 @@ export const DiscoveryPage = () => {
           <h2 ref={howItWorksHeadingRef} tabIndex={-1}>
             How it works
           </h2>
-          <ol className="how-it-works__steps">
+          <ol className="how-it-works_steps">
             <li>
-              <svg className="how-it-works__icon" aria-hidden="true" viewBox="0 0 24 24">
+              <svg className="how-it-works_icon" aria-hidden="true" viewBox="0 0 24 24">
                 <path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" />
                 <path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
               </svg>
@@ -220,7 +220,7 @@ export const DiscoveryPage = () => {
               <p>Submit the URL of a public social video.</p>
             </li>
             <li>
-              <svg className="how-it-works__icon" aria-hidden="true" viewBox="0 0 24 24">
+              <svg className="how-it-works_icon" aria-hidden="true" viewBox="0 0 24 24">
                 <circle cx="11" cy="11" r="7" />
                 <path d="m20 20-3.5-3.5" />
               </svg>
@@ -228,7 +228,7 @@ export const DiscoveryPage = () => {
               <p>Reelio analyzes the transcript to identify movies, TV series, music, and books.</p>
             </li>
             <li>
-              <svg className="how-it-works__icon" aria-hidden="true" viewBox="0 0 24 24">
+              <svg className="how-it-works_icon" aria-hidden="true" viewBox="0 0 24 24">
                 <rect x="3" y="3" width="7" height="9" rx="1" />
                 <rect x="14" y="3" width="7" height="5" rx="1" />
                 <rect x="14" y="12" width="7" height="9" rx="1" />

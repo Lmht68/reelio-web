@@ -1,40 +1,9 @@
-import { useState } from 'react'
 import type { MediaResult, UnknownMediaResult } from '../model/discovery'
+import { ResultArtwork } from './ResultArtwork'
 
 type ResultCardProps = {
   readonly result: MediaResult
-}
-
-type ResultArtworkProps = {
-  readonly title: string
-  readonly artworkUrl?: string
-  readonly shape: 'portrait' | 'square'
-}
-
-
-const ResultArtwork = ({ title, artworkUrl, shape }: ResultArtworkProps) => {
-  const [hasImageError, setHasImageError] = useState(false)
-  const shouldShowImage = artworkUrl !== undefined && artworkUrl !== '' && !hasImageError
-
-  return (
-    <div className={`result-card__artwork result-card__artwork--${shape}`}>
-      {shouldShowImage ? (
-        <img src={artworkUrl} alt={`Artwork for ${title}`} onError={() => setHasImageError(true)} />
-      ) : (
-        <span
-          className="result-card__artwork-placeholder"
-          role="img"
-          aria-label={`No artwork available for ${title}`}
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24">
-            <rect x="3" y="3" width="18" height="18" rx="3" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="m5.5 18 4.5-4.5 3 3 2.5-2.5 3 4" />
-          </svg>
-        </span>
-      )}
-    </div>
-  )
+  readonly onOpenDetails: (result: MediaResult, opener: HTMLButtonElement) => void
 }
 
 type ResultScoreProps = {
@@ -45,12 +14,12 @@ const ResultScore = ({ score }: ResultScoreProps) => {
   const formattedScore = score.toFixed(1)
 
   return (
-    <p className="result-card__score" aria-label={`Score ${formattedScore}`}>
+    <span className="result-card_score" aria-label={`Score ${formattedScore}`}>
       <svg aria-hidden="true" viewBox="0 0 24 24">
         <path d="m12 3.5 2.63 5.33 5.88.86-4.25 4.14 1 5.85L12 16.91l-5.26 2.77 1-5.85-4.25-4.14 5.88-.86L12 3.5Z" />
       </svg>
       <span>{formattedScore}</span>
-    </p>
+    </span>
   )
 }
 
@@ -69,118 +38,234 @@ const unknownClassificationLabel = (result: UnknownMediaResult): string => {
   }
 }
 
+const unknownArtworkShape = (result: UnknownMediaResult): 'portrait' | 'square' => {
+  switch (result.originalClassification) {
+    case 'movie':
+    case 'tvSeries':
+    case 'book':
+      return 'portrait'
+    case 'track':
+    case 'musicRelease':
+      return 'square'
+  }
+}
+
+const namesLabel = (names: ReadonlyArray<string>): string => names.join(', ')
+
+const unknownCardLabel = (result: UnknownMediaResult): string => {
+  const labelParts = [result.title, unknownClassificationLabel(result)]
+
+  switch (result.originalClassification) {
+    case 'movie':
+    case 'tvSeries':
+      labelParts.push(`year ${result.year}`)
+      break
+    case 'track':
+      if (result.artists.length > 0) {
+        labelParts.push(`artists ${namesLabel(result.artists)}`)
+      }
+      if (result.releaseTitle !== undefined) {
+        labelParts.push(`release ${result.releaseTitle}`)
+      }
+      if (result.releaseYear !== undefined) {
+        labelParts.push(`release year ${result.releaseYear}`)
+      }
+      break
+    case 'musicRelease':
+      if (result.artists.length > 0) {
+        labelParts.push(`artists ${namesLabel(result.artists)}`)
+      }
+      if (result.releaseYear !== undefined) {
+        labelParts.push(`release year ${result.releaseYear}`)
+      }
+      break
+    case 'book':
+      if (result.authors.length > 0) {
+        labelParts.push(`authors ${namesLabel(result.authors)}`)
+      }
+      break
+  }
+
+  return [...labelParts, 'Not identified', 'open details'].join(', ')
+}
+
 const ResultMetadata = ({ result }: { readonly result: UnknownMediaResult }) => {
   switch (result.originalClassification) {
     case 'movie':
     case 'tvSeries':
-      return <p className="result-card__metadata">Year: {result.year}</p>
+      return <span className="result-card_metadata">Year: {result.year}</span>
     case 'track':
       return (
-        <div className="result-card__metadata">
-          {result.artists.length > 0 ? <p>Artists: {result.artists.join(', ')}</p> : null}
-          {result.releaseTitle === undefined ? null : <p>Release: {result.releaseTitle}</p>}
-          {result.releaseYear === undefined ? null : <p>Release year: {result.releaseYear}</p>}
-        </div>
+        <span className="result-card_metadata">
+          {result.artists.length > 0 ? <span>Artists: {namesLabel(result.artists)}</span> : null}
+          {result.releaseTitle === undefined ? null : <span>Release: {result.releaseTitle}</span>}
+          {result.releaseYear === undefined ? null : <span>Release year: {result.releaseYear}</span>}
+        </span>
       )
     case 'musicRelease':
       return (
-        <div className="result-card__metadata">
-          {result.artists.length > 0 ? <p>Artists: {result.artists.join(', ')}</p> : null}
-          {result.releaseYear === undefined ? null : <p>Release year: {result.releaseYear}</p>}
-        </div>
+        <span className="result-card_metadata">
+          {result.artists.length > 0 ? <span>Artists: {namesLabel(result.artists)}</span> : null}
+          {result.releaseYear === undefined ? null : <span>Release year: {result.releaseYear}</span>}
+        </span>
       )
     case 'book':
       return result.authors.length > 0 ? (
-        <p className="result-card__metadata">Authors: {result.authors.join(', ')}</p>
+        <span className="result-card_metadata">Authors: {namesLabel(result.authors)}</span>
       ) : null
   }
 }
 
-const UnknownResultCard = ({ result }: { readonly result: UnknownMediaResult }) => (
-  <article className="result-card result-card--unknown">
-    <ResultArtwork title={result.title} shape="portrait" />
-    <div className="result-card__content">
-      <h3>{result.title}</h3>
-      <p className="result-card__classification">{unknownClassificationLabel(result)}</p>
+const UnknownResultCard = ({
+  result,
+  onOpenDetails,
+}: {
+  readonly result: UnknownMediaResult
+  readonly onOpenDetails: ResultCardProps['onOpenDetails']
+}) => (
+  <button
+    className="result-card result-card--unknown"
+    type="button"
+    aria-label={unknownCardLabel(result)}
+    onClick={(event) => onOpenDetails(result, event.currentTarget)}
+  >
+    <ResultArtwork title={result.title} shape={unknownArtworkShape(result)} />
+    <span className="result-card_content">
+      <span className="result-card_title">{result.title}</span>
+      <span className="result-card_classification">{unknownClassificationLabel(result)}</span>
       <ResultMetadata result={result} />
-      <span className="result-card__status-chip">Not identified</span>
-      <p className="result-card__explanation">
+      <span className="result-card_status-chip">Not identified</span>
+      <span className="result-card_explanation">
         Reelio heard this mention but couldn’t match it to a catalog result.
-      </p>
-    </div>
-  </article>
+      </span>
+    </span>
+  </button>
 )
 
-export const ResultCard = ({ result }: ResultCardProps) => {
+export const ResultCard = ({ result, onOpenDetails }: ResultCardProps) => {
   if (result.kind === 'unknown') {
-    return <UnknownResultCard result={result} />
+    return <UnknownResultCard result={result} onOpenDetails={onOpenDetails} />
   }
 
   switch (result.kind) {
-    case 'movie':
+    case 'movie': {
+      const formattedScore = result.tmdbScore.toFixed(1)
+
       return (
-        <article className="result-card">
+        <button
+          className="result-card"
+          type="button"
+          aria-label={`${result.title}, ${result.year}, score ${formattedScore}, open details`}
+          onClick={(event) => onOpenDetails(result, event.currentTarget)}
+        >
           <ResultArtwork title={result.title} artworkUrl={result.artworkUrl} shape="portrait" />
-          <div className="result-card__content">
-            <h3>{result.title}</h3>
-            <div className="result-card__screen-metadata">
-              <p className="result-card__metadata">{result.year}</p>
+          <span className="result-card_content">
+            <span className="result-card_title">{result.title}</span>
+            <span className="result-card_screen-metadata">
+              <span className="result-card_metadata">{result.year}</span>
+              <span className="result-card_metadata-separator" aria-hidden="true">
+                ·
+              </span>
               <ResultScore score={result.tmdbScore} />
-            </div>
-          </div>
-        </article>
+            </span>
+          </span>
+        </button>
       )
-    case 'tvSeries':
+    }
+    case 'tvSeries': {
+      const formattedScore = result.tmdbScore.toFixed(1)
+      const years =
+        result.lastAirYear === undefined
+          ? `${result.firstAirYear}`
+          : `${result.firstAirYear}–${result.lastAirYear}`
+      const accessibleYears =
+        result.lastAirYear === undefined
+          ? `${result.firstAirYear}`
+          : `${result.firstAirYear} to ${result.lastAirYear}`
+
       return (
-        <article className="result-card">
+        <button
+          className="result-card"
+          type="button"
+          aria-label={`${result.title}, ${accessibleYears}, score ${formattedScore}, open details`}
+          onClick={(event) => onOpenDetails(result, event.currentTarget)}
+        >
           <ResultArtwork title={result.title} artworkUrl={result.artworkUrl} shape="portrait" />
-          <div className="result-card__content">
-            <h3>{result.title}</h3>
-            <div className="result-card__screen-metadata">
-              <p className="result-card__metadata">
-                {result.firstAirYear}
-                {result.lastAirYear === undefined ? '' : `–${result.lastAirYear}`}
-              </p>
+          <span className="result-card_content">
+            <span className="result-card_title">{result.title}</span>
+            <span className="result-card_screen-metadata">
+              <span className="result-card_metadata">{years}</span>
+              <span className="result-card_metadata-separator" aria-hidden="true">
+                ·
+              </span>
               <ResultScore score={result.tmdbScore} />
-            </div>
-          </div>
-        </article>
+            </span>
+          </span>
+        </button>
       )
-    case 'track':
+    }
+    case 'track': {
+      const artists = result.artists.map((artist) => artist.name)
+      const artistLabel = artists.length === 0 ? '' : `, ${namesLabel(artists)}`
+
       return (
-        <article className="result-card">
+        <button
+          className="result-card"
+          type="button"
+          aria-label={`${result.title}${artistLabel}, open details`}
+          onClick={(event) => onOpenDetails(result, event.currentTarget)}
+        >
           <ResultArtwork title={result.title} artworkUrl={result.artworkUrl} shape="square" />
-          <div className="result-card__content">
-            <h3>{result.title}</h3>
-            {result.artists.length === 0 ? null : (
-              <p className="result-card__metadata">{result.artists.map((artist) => artist.name).join(', ')}</p>
+          <span className="result-card_content">
+            <span className="result-card_title">{result.title}</span>
+            {artists.length === 0 ? null : (
+              <span className="result-card_metadata">{namesLabel(artists)}</span>
             )}
-          </div>
-        </article>
+          </span>
+        </button>
       )
-    case 'musicRelease':
+    }
+    case 'musicRelease': {
+      const artists = result.artists.map((artist) => artist.name)
+      const artistLabel = artists.length === 0 ? '' : `, ${namesLabel(artists)}`
+
       return (
-        <article className="result-card">
+        <button
+          className="result-card"
+          type="button"
+          aria-label={`${result.title}${artistLabel}, open details`}
+          onClick={(event) => onOpenDetails(result, event.currentTarget)}
+        >
           <ResultArtwork title={result.title} artworkUrl={result.artworkUrl} shape="square" />
-          <div className="result-card__content">
-            <h3>{result.title}</h3>
-            {result.artists.length === 0 ? null : (
-              <p className="result-card__metadata">{result.artists.map((artist) => artist.name).join(', ')}</p>
+          <span className="result-card_content">
+            <span className="result-card_title">{result.title}</span>
+            {artists.length === 0 ? null : (
+              <span className="result-card_metadata">{namesLabel(artists)}</span>
             )}
-          </div>
-        </article>
+          </span>
+        </button>
       )
-    case 'book':
+    }
+    case 'book': {
+      const authors = result.authors.map((author) => author.name)
+      const authorLabel = authors.length === 0 ? '' : `, ${namesLabel(authors)}`
+
       return (
-        <article className="result-card">
+        <button
+          className="result-card"
+          type="button"
+          aria-label={`${result.title}${authorLabel}, open details`}
+          onClick={(event) => onOpenDetails(result, event.currentTarget)}
+        >
           <ResultArtwork title={result.title} artworkUrl={result.artworkUrl} shape="portrait" />
-          <div className="result-card__content">
-            <h3>{result.title}</h3>
-            {result.authors.length === 0 ? null : (
-              <p className="result-card__metadata">{result.authors.map((author) => author.name).join(', ')}</p>
+          <span className="result-card_content">
+            <span className="result-card_title">{result.title}</span>
+            {authors.length === 0 ? null : (
+              <span className="result-card_metadata">{namesLabel(authors)}</span>
             )}
-          </div>
-        </article>
+          </span>
+        </button>
       )
+    }
   }
 }

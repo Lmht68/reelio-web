@@ -1,9 +1,11 @@
-import type { KeyboardEvent } from 'react'
+import { useCallback, useState, type KeyboardEvent } from 'react'
 import {
   MEDIA_CATEGORIES,
   type CategorizedMediaResults,
   type MediaCategory,
+  type MediaResult,
 } from '../model/discovery'
+import { DetailDrawer } from './DetailDrawer'
 import { ResultCard } from './ResultCard'
 
 type ResultBrowserProps = {
@@ -12,6 +14,14 @@ type ResultBrowserProps = {
   readonly onSelectCategory: (category: MediaCategory) => void
 }
 
+type DetailDrawerState =
+  | {
+    readonly isOpen: boolean
+    readonly result: MediaResult
+    readonly opener: HTMLButtonElement
+  }
+  | undefined
+
 const tabId = (category: MediaCategory) => `media-results-tab-${category}`
 
 export const ResultBrowser = ({
@@ -19,6 +29,18 @@ export const ResultBrowser = ({
   selectedCategory,
   onSelectCategory,
 }: ResultBrowserProps) => {
+  const [detailDrawerState, setDetailDrawerState] = useState<DetailDrawerState>()
+
+  const handleOpenDetails = useCallback((result: MediaResult, opener: HTMLButtonElement) => {
+    setDetailDrawerState({ isOpen: true, result, opener })
+  }, [])
+
+  const handleCloseDetails = useCallback(() => {
+    setDetailDrawerState((currentState) =>
+      currentState === undefined ? undefined : { ...currentState, isOpen: false },
+    )
+  }, [])
+
   const handleTabKeyDown = (
     event: KeyboardEvent<HTMLButtonElement>,
     category: MediaCategory,
@@ -58,7 +80,7 @@ export const ResultBrowser = ({
 
   return (
     <section className="result-browser" aria-label="Media results">
-      <div className="result-browser__tabs" role="tablist" aria-label="Media categories">
+      <div className="result-browser_tabs" role="tablist" aria-label="Media categories">
         {MEDIA_CATEGORIES.map(({ category, label }) => {
           const count = categorizedResults[category].length
           const isSelected = category === selectedCategory
@@ -67,7 +89,7 @@ export const ResultBrowser = ({
           return (
             <button
               key={category}
-              className="result-browser__tab"
+              className="result-browser_tab"
               type="button"
               role="tab"
               id={tabId(category)}
@@ -80,23 +102,35 @@ export const ResultBrowser = ({
               onKeyDown={(event) => handleTabKeyDown(event, category)}
             >
               <span>{label}</span>
-              {isDisabled ? null : <span className="result-browser__count">{count}</span>}
+              {isDisabled ? null : <span className="result-browser_count">{count}</span>}
             </button>
           )
         })}
       </div>
       <div
         id={`media-results-panel-${selectedCategory}`}
-        className="result-browser__panel"
+        className="result-browser_panel"
         role="tabpanel"
         aria-labelledby={tabId(selectedCategory)}
       >
-        <div className="result-browser__grid">
+        <div className="result-browser_grid">
           {selectedResults.map((result, index) => (
-            <ResultCard key={`${result.kind}-${result.title}-${index}`} result={result} />
+            <ResultCard
+              key={`${result.kind}-${result.title}-${index}`}
+              result={result}
+              onOpenDetails={handleOpenDetails}
+            />
           ))}
         </div>
       </div>
+      {detailDrawerState === undefined ? null : (
+        <DetailDrawer
+          isOpen={detailDrawerState.isOpen}
+          result={detailDrawerState.result}
+          opener={detailDrawerState.opener}
+          onClose={handleCloseDetails}
+        />
+      )}
     </section>
   )
 }
