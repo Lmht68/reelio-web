@@ -225,6 +225,214 @@
   font-size: 14px;
 }
 
+.result-browser {
+  margin-top: 24px;
+}
+
+.result-browser__tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  scrollbar-color: var(--color-border) transparent;
+}
+
+.result-browser__tab {
+  display: inline-flex;
+  min-height: 48px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  padding: 12px 14px 9px;
+  background: transparent;
+  color: var(--color-muted);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.result-browser__tab[aria-selected="true"] {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.result-browser__tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.result-browser__count {
+  border-radius: 999px;
+  padding: 1px 8px;
+  background: var(--color-accent-surface);
+  color: var(--color-accent);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.result-browser__panel {
+  padding-top: 20px;
+}
+
+.result-browser__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 24px 18px;
+}
+
+.result-card {
+  min-width: 0;
+  align-self: start;
+}
+
+.result-card__artwork {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-accent-surface);
+}
+
+.result-card__artwork--portrait {
+  aspect-ratio: 2 / 3;
+}
+
+.result-card__artwork--square {
+  aspect-ratio: 1;
+}
+
+.result-card__artwork img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.result-card__artwork-placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: var(--color-muted);
+}
+
+.result-card__artwork-placeholder svg {
+  width: 34px;
+  height: 34px;
+  fill: none;
+  opacity: 0.65;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.result-card__content {
+  min-width: 0;
+  padding-top: 10px;
+}
+
+.result-card h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0 0 3px;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.result-card__metadata,
+.result-card__metadata p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.result-card__metadata p + p {
+  margin-top: 2px;
+}
+
+.result-card__screen-metadata {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.result-card__status-chip {
+  display: inline-block;
+  margin-top: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.result-card__score {
+  display: inline-flex;
+  align-items: center;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.result-card__score svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: var(--color-accent);
+}
+
+.result-card__classification {
+  margin: 0 0 4px;
+  color: var(--color-muted);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.result-card__status-chip {
+  border-color: transparent;
+  background: var(--color-accent-surface);
+  color: var(--color-accent);
+}
+
+.result-card__explanation {
+  margin: 8px 0 0;
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.discovery-result__empty {
+  padding-block: 48px;
+  text-align: center;
+}
+
+.discovery-result__empty h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.discovery-result__empty p {
+  max-width: 500px;
+  margin: 0 auto;
+  color: var(--color-muted);
+}
+
 .how-it-works {
   border-top: 1px solid var(--color-border);
   padding-block: 56px 64px;
@@ -327,6 +535,11 @@
     margin-top: 0;
   }
 
+
+  .result-browser__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px 14px;
+  }
 
   .how-it-works__steps {
     grid-template-columns: 1fr;

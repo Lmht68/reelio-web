@@ -1,13 +1,20 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { extractSourceVideo } from './api/extractions'
-import type { SourceVideoSummary } from './model/discovery'
-import { validateSourceVideoUrl } from './model/discovery'
+import { ResultBrowser } from './components/ResultBrowser'
+import {
+  getFirstNonEmptyMediaCategory,
+  validateSourceVideoUrl,
+  type DiscoveryData,
+  type MediaCategory,
+  type SourceVideoSummary,
+} from './model/discovery'
 import './DiscoveryPage.css'
 
 type DiscoveryState =
   | { status: 'idle' }
   | { status: 'loading'; submittedUrl: string }
-  | { status: 'success'; sourceVideo: SourceVideoSummary }
+  | { status: 'success'; data: DiscoveryData; selectedCategory: MediaCategory }
+  | { status: 'empty'; data: DiscoveryData }
   | { status: 'failure'; message: string }
 
 type SourceVideoSummaryCardProps = {
@@ -69,14 +76,32 @@ export const DiscoveryPage = () => {
     setDiscoveryState({ status: 'loading', submittedUrl: validation.url })
 
     try {
-      const sourceVideo = await extractSourceVideo(validation.url)
-      setDiscoveryState({ status: 'success', sourceVideo })
+      const data = await extractSourceVideo(validation.url)
+      const selectedCategory = getFirstNonEmptyMediaCategory(data.categorizedResults)
+      setDiscoveryState(
+        selectedCategory === undefined
+          ? { status: 'empty', data }
+          : { status: 'success', data, selectedCategory },
+      )
     } catch {
       setDiscoveryState({
         status: 'failure',
         message: 'We couldn’t complete the discovery. Please try again.',
       })
     }
+  }
+
+  const handleSelectCategory = (selectedCategory: MediaCategory) => {
+    setDiscoveryState((currentState) => {
+      if (
+        currentState.status !== 'success' ||
+        currentState.data.categorizedResults[selectedCategory].length === 0
+      ) {
+        return currentState
+      }
+
+      return { ...currentState, selectedCategory }
+    })
   }
 
   const handleHowItWorks = () => {
@@ -115,7 +140,6 @@ export const DiscoveryPage = () => {
                   type="url"
                   inputMode="url"
                   placeholder="https://www.tiktok.com/@creator/video/123…"
-                  autoComplete="off"
                   value={urlValue}
                   onChange={(event) => handleUrlChange(event.target.value)}
                   disabled={isLoading}
@@ -153,8 +177,25 @@ export const DiscoveryPage = () => {
               </span>
             </p>
           ) : null}
-          {discoveryState.status === 'success' ? (
-            <SourceVideoSummaryCard sourceVideo={discoveryState.sourceVideo} />
+          {discoveryState.status === 'success' || discoveryState.status === 'empty' ? (
+            <>
+              <SourceVideoSummaryCard sourceVideo={discoveryState.data.sourceVideo} />
+              {discoveryState.status === 'success' ? (
+                <ResultBrowser
+                  categorizedResults={discoveryState.data.categorizedResults}
+                  selectedCategory={discoveryState.selectedCategory}
+                  onSelectCategory={handleSelectCategory}
+                />
+              ) : (
+                <section className="discovery-result__empty" aria-labelledby="empty-discovery-heading">
+                  <h2 id="empty-discovery-heading">We didn’t find anything</h2>
+                  <p>
+                    No movies, shows, music, or books were mentioned in this video. Try another
+                    one.
+                  </p>
+                </section>
+              )}
+            </>
           ) : null}
           {discoveryState.status === 'failure' ? (
             <p className="discovery-result__failure" role="alert">
