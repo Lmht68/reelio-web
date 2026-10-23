@@ -4,6 +4,7 @@ import spotifyIconUrl from '../../../assets/icons/providers/spotify.svg'
 import tmdbIconUrl from '../../../assets/icons/providers/tmdb.svg'
 import { useEffect, useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import { useModalDialog } from '../../../components/Overlay/useModalDialog'
 import type { MediaResult, UnknownMediaResult } from '../model/discovery'
 import { ResultArtwork } from './ResultArtwork'
 
@@ -14,13 +15,6 @@ type DetailDrawerProps = {
   readonly onClose: () => void
 }
 
-type BodyStyleState = {
-  readonly overflow: string
-  readonly paddingRight: string
-  readonly position: string
-  readonly top: string
-  readonly width: string
-}
 
 type Provider = 'TMDB' | 'IMDb' | 'Spotify' | 'Open Library'
 
@@ -346,93 +340,23 @@ const DrawerContent = ({ result }: { readonly result: MediaResult }) => {
   }
 }
 
-const getFocusableControls = (drawer: HTMLElement): Array<HTMLAnchorElement | HTMLButtonElement> =>
-  Array.from(drawer.querySelectorAll<HTMLAnchorElement | HTMLButtonElement>('a[href], button:not([disabled])'))
 
 export const DetailDrawer = ({ isOpen, result, opener, onClose }: DetailDrawerProps) => {
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   const drawerRef = useRef<HTMLElement>(null)
-  const openerRef = useRef(opener)
+  const openerRef = useRef<HTMLButtonElement | null>(opener)
 
   useEffect(() => {
     openerRef.current = opener
   }, [opener])
 
-  useEffect(() => {
-    if (!isOpen) {
-      return
-    }
-
-    const savedScrollY = window.scrollY
-    const body = document.body
-    const previousBodyStyles: BodyStyleState = {
-      overflow: body.style.overflow,
-      paddingRight: body.style.paddingRight,
-      position: body.style.position,
-      top: body.style.top,
-      width: body.style.width,
-    }
-    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
-
-    body.style.overflow = 'hidden'
-    body.style.position = 'fixed'
-    body.style.top = `-${savedScrollY}px`
-    body.style.width = '100%'
-    if (scrollbarWidth > 0) {
-      body.style.paddingRight = `${scrollbarWidth}px`
-    }
-
-    closeButtonRef.current?.focus({ preventScroll: true })
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onClose()
-        return
-      }
-
-      if (event.key !== 'Tab') {
-        return
-      }
-
-      const drawer = drawerRef.current
-      if (drawer === null) {
-        return
-      }
-
-      const focusableControls = getFocusableControls(drawer)
-      if (focusableControls.length === 0) {
-        event.preventDefault()
-        return
-      }
-
-      const firstControl = focusableControls[0]
-      const lastControl = focusableControls[focusableControls.length - 1]
-
-      if (event.shiftKey && document.activeElement === firstControl) {
-        event.preventDefault()
-        lastControl.focus()
-      } else if (!event.shiftKey && document.activeElement === lastControl) {
-        event.preventDefault()
-        firstControl.focus()
-      }
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      body.style.overflow = previousBodyStyles.overflow
-      body.style.paddingRight = previousBodyStyles.paddingRight
-      body.style.position = previousBodyStyles.position
-      body.style.top = previousBodyStyles.top
-      body.style.width = previousBodyStyles.width
-      requestAnimationFrame(() => {
-        window.scrollTo(0, savedScrollY)
-        openerRef.current.focus({ preventScroll: true })
-      })
-    }
-  }, [isOpen, onClose])
+  useModalDialog({
+    isOpen,
+    onClose,
+    dialogRef: drawerRef,
+    initialFocusRef: closeButtonRef,
+    restoreFocusRef: openerRef,
+  })
 
   const handleScrimPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.target === event.currentTarget) {

@@ -7,6 +7,8 @@
   --color-border: #e4e4df;
   --color-accent: #c2410c;
   --color-accent-surface: #fdeee6;
+  --color-highlight: #ffe58a;
+  --color-highlight-active: #ffb02e;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -23,6 +25,8 @@
     --color-border: #2f2f35;
     --color-accent: #ff9a66;
     --color-accent-surface: #2e1d14;
+    --color-highlight: #6b5a12;
+    --color-highlight-active: #a5700f;
   }
 }
 

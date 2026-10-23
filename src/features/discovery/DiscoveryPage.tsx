@@ -1,12 +1,14 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useCallback, useRef, useState, type FormEvent } from 'react'
 import { extractSourceVideo } from './api/extractions'
 import { ResultBrowser } from './components/ResultBrowser'
+import { TranscriptModal } from './components/TranscriptModal'
 import {
   getFirstNonEmptyMediaCategory,
   validateSourceVideoUrl,
   type DiscoveryData,
   type MediaCategory,
   type SourceVideoSummary,
+  type TranscriptData,
 } from './model/discovery'
 import './DiscoveryPage.css'
 
@@ -19,9 +21,16 @@ type DiscoveryState =
 
 type SourceVideoSummaryCardProps = {
   sourceVideo: SourceVideoSummary
+  transcript: TranscriptData
 }
 
-const SourceVideoSummaryCard = ({ sourceVideo }: SourceVideoSummaryCardProps) => {
+const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryCardProps) => {
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false)
+  const transcriptOpenerRef = useRef<HTMLButtonElement>(null)
+  const handleCloseTranscript = useCallback(() => {
+    setIsTranscriptOpen(false)
+  }, [])
+
   const title = sourceVideo.title?.trim() || 'Source video'
 
   return (
@@ -40,7 +49,24 @@ const SourceVideoSummaryCard = ({ sourceVideo }: SourceVideoSummaryCardProps) =>
         <div className="source-video-summary_metadata">
           <span>{sourceVideo.platformLabel}</span>
         </div>
+        <button
+          ref={transcriptOpenerRef}
+          className="source-video-summary_transcript-button"
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={isTranscriptOpen}
+          onClick={() => setIsTranscriptOpen(true)}
+        >
+          View transcript
+        </button>
       </div>
+      {isTranscriptOpen ? (
+        <TranscriptModal
+          transcript={transcript}
+          openerRef={transcriptOpenerRef}
+          onClose={handleCloseTranscript}
+        />
+      ) : null}
     </section>
   )
 }
@@ -179,7 +205,10 @@ export const DiscoveryPage = () => {
           ) : null}
           {discoveryState.status === 'success' || discoveryState.status === 'empty' ? (
             <>
-              <SourceVideoSummaryCard sourceVideo={discoveryState.data.sourceVideo} />
+              <SourceVideoSummaryCard
+                sourceVideo={discoveryState.data.sourceVideo}
+                transcript={discoveryState.data.transcript}
+              />
               {discoveryState.status === 'success' ? (
                 <ResultBrowser
                   categorizedResults={discoveryState.data.categorizedResults}

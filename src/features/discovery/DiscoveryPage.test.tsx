@@ -13,6 +13,12 @@ const ZERO_COUNTS = { n_mentions: 0, n_resolved: 0, n_unresolved: 0 }
 const MIXED_COUNTS = { n_mentions: 2, n_resolved: 1, n_unresolved: 1 }
 const RESOLVED_COUNTS = { n_mentions: 1, n_resolved: 1, n_unresolved: 0 }
 
+const TRANSCRIPT_TEXT = [
+  'Today I revisited Dune with friends and explained why its quiet deserts, patient rhythms, and immense skies still reward careful viewing whenever the story returns to our conversations after dinner with curious visitors who enjoy science fiction, practical effects, patient characters, and big-screen soundtracks during long weekends at home for viewers.',
+  'DUNE followed in our conversation, then a younger cousin recommended dune again while we compared ambitious adaptations, patient performances, and the way memorable music carries a scene after the credits end on a rainy afternoon filled with snacks, notebooks, questions, laughter, and thoughtful debate.',
+  'Later we wrote the literal Dune? [test] <mark>safe</mark> notation into our notes so the search demonstration could show punctuation, brackets, and markup-like characters as ordinary words rather than instructions, while everyone agreed the transcript should remain readable, calm, complete, and safe for people reviewing the source.',
+].join(' ')
+
 const EMPTY_EXTRACTION_FIXTURE = {
   market: 'US',
   source: {
@@ -47,6 +53,10 @@ const EMPTY_EXTRACTION_FIXTURE = {
 
 const EXTRACTION_FIXTURE = {
   ...EMPTY_EXTRACTION_FIXTURE,
+  transcript: {
+    ...EMPTY_EXTRACTION_FIXTURE.transcript,
+    text: TRANSCRIPT_TEXT,
+  },
   statistics: {
     movies: MIXED_COUNTS,
     tv_series: MIXED_COUNTS,
@@ -358,6 +368,11 @@ const server = setupServer(
 )
 
 const originalScrollYDescriptor = Object.getOwnPropertyDescriptor(window, 'scrollY')
+const originalScrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  'scrollIntoView',
+)
+const scrollIntoViewMock = vi.fn()
 
 const setPageScrollY = (scrollY: number) => {
   Object.defineProperty(window, 'scrollY', { configurable: true, value: scrollY })
@@ -368,6 +383,11 @@ const openDetails = async (user: UserEvent, cardName: string) => {
   return screen.getByRole('dialog', { name: 'Details' })
 }
 
+const openTranscript = async (user: UserEvent) => {
+  await user.click(await screen.findByRole('button', { name: 'View transcript' }))
+  return screen.getByRole('dialog', { name: 'Transcript' })
+}
+
 const submitSourceVideo = async (user: UserEvent) => {
   await user.type(screen.getByLabelText('Video URL'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
   await user.click(screen.getByRole('button', { name: 'Discover' }))
@@ -376,6 +396,11 @@ const submitSourceVideo = async (user: UserEvent) => {
 
 beforeEach(() => {
   vi.stubGlobal('scrollTo', vi.fn())
+  scrollIntoViewMock.mockReset()
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoViewMock,
+  })
 })
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' })
@@ -391,6 +416,11 @@ afterEach(() => {
     Object.defineProperty(window, 'scrollY', originalScrollYDescriptor)
   }
   vi.unstubAllGlobals()
+  if (originalScrollIntoViewDescriptor === undefined) {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView')
+  } else {
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoViewDescriptor)
+  }
 })
 
 afterAll(() => {
@@ -1121,6 +1151,7 @@ describe('DiscoveryPage', () => {
     await submitSourceVideo(user)
 
     expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View transcript' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'We didn’t find anything' })).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -1166,5 +1197,260 @@ describe('DiscoveryPage', () => {
       'We couldn’t complete the discovery. Please try again.',
     )
     expect(screen.queryByRole('heading', { name: 'Source video' })).not.toBeInTheDocument()
+  })
+
+  it('should open the normalized transcript when its source-summary action is activated', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const transcriptOpener = await screen.findByRole('button', { name: 'View transcript' })
+    expect(transcriptOpener).toBeInTheDocument()
+
+    const dialog = await openTranscript(user)
+    expect(screen.getByLabelText('Search the transcript')).toHaveFocus()
+    expect(
+      Array.from(dialog.querySelectorAll('.transcript-modal_text p'), (paragraph) => paragraph.textContent).join(
+        ' ',
+      ),
+    ).toBe(TRANSCRIPT_TEXT)
+
+    await user.keyboard('{Escape}')
+  })
+
+  it('should highlight literal case-insensitive matches and wrap match controls when a query is entered', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const dialog = await openTranscript(user)
+    const search = screen.getByLabelText('Search the transcript')
+    const matchCount = within(dialog).getByText('', { selector: '.transcript-modal_match-count' })
+    await user.type(search, 'dune')
+
+    await waitFor(() => {
+      expect(matchCount).toHaveTextContent('1 of 4')
+      expect(scrollIntoViewMock).toHaveBeenLastCalledWith({ block: 'center', behavior: 'smooth' })
+    })
+    expect(Array.from(dialog.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual([
+      'Dune',
+      'DUNE',
+      'dune',
+      'Dune',
+    ])
+    expect(dialog.querySelectorAll('mark[aria-current="true"]')).toHaveLength(1)
+
+    const previousMatch = within(dialog).getByRole('button', { name: 'Previous match' })
+    const nextMatch = within(dialog).getByRole('button', { name: 'Next match' })
+    await user.click(nextMatch)
+    expect(matchCount).toHaveTextContent('2 of 4')
+    await user.click(nextMatch)
+    expect(matchCount).toHaveTextContent('3 of 4')
+    await user.click(nextMatch)
+    expect(matchCount).toHaveTextContent('4 of 4')
+    await user.click(nextMatch)
+    expect(matchCount).toHaveTextContent('1 of 4')
+    await user.click(previousMatch)
+    expect(matchCount).toHaveTextContent('4 of 4')
+    search.focus()
+    await user.keyboard('{Enter}')
+    expect(matchCount).toHaveTextContent('1 of 4')
+    await user.keyboard('{Shift>}{Enter}{/Shift}')
+    expect(matchCount).toHaveTextContent('4 of 4')
+
+    await user.clear(search)
+    fireEvent.change(search, { target: { value: 'Dune? [test] <mark>safe</mark>' } })
+    expect(search).toHaveValue('Dune? [test] <mark>safe</mark>')
+    expect(matchCount).toHaveTextContent('1 of 1')
+    expect(Array.from(dialog.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual([
+      'Dune?',
+      '[test] <mark>safe</mark>',
+    ])
+    expect(dialog.querySelectorAll('mark[aria-current="true"]')).toHaveLength(2)
+    expect(dialog.querySelector('mark mark')).toBeNull()
+
+    await user.clear(search)
+    await user.type(search, 'viewers. DUNE')
+    expect(matchCount).toHaveTextContent('1 of 1')
+    expect(dialog.querySelectorAll('mark')).toHaveLength(2)
+    expect(dialog.querySelectorAll('mark[aria-current="true"]')).toHaveLength(2)
+
+    await user.keyboard('{Escape}')
+  })
+
+  it('should show no-match copy and return ordinary paragraphs when the search query changes', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const dialog = await openTranscript(user)
+    const search = screen.getByLabelText('Search the transcript')
+    await user.type(search, 'not in this transcript')
+
+    expect(within(dialog).getByRole('heading', { name: 'No matches' })).toBeInTheDocument()
+    expect(within(dialog).getByText('Try a different word.')).toBeInTheDocument()
+    expect(within(dialog).getByText('0 matches')).toBeInTheDocument()
+    expect(dialog.querySelectorAll('.transcript-modal_text p')).toHaveLength(0)
+
+    await user.clear(search)
+    expect(within(dialog).queryByRole('heading', { name: 'No matches' })).not.toBeInTheDocument()
+    expect(dialog.querySelectorAll('.transcript-modal_text p').length).toBeGreaterThan(1)
+
+    await user.keyboard('{Escape}')
+  })
+
+  it('should preserve an active query and expose timestamp unavailability when transcript views change', async () => {
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const dialog = await openTranscript(user)
+    const search = screen.getByLabelText('Search the transcript')
+    await user.type(search, 'dune')
+    await user.click(within(dialog).getByRole('button', { name: 'Next match' }))
+    expect(within(dialog).getByText('2 of 4')).toBeInTheDocument()
+
+    const [textTab, timestampTab] = within(dialog).getAllByRole('tab')
+    expect([textTab.textContent, timestampTab.textContent]).toEqual(['Text', 'Timestamp'])
+    await user.click(timestampTab)
+    expect(timestampTab).toHaveAttribute('aria-selected', 'true')
+    expect(search).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Previous match' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Next match' })).toBeDisabled()
+    expect(within(dialog).getByText('2 of 4')).toBeInTheDocument()
+
+    const timestampPanel = dialog.querySelector('#transcript-panel-timestamp')
+    expect(timestampPanel).not.toBeNull()
+    expect(Array.from(timestampPanel?.querySelectorAll('h3, p') ?? [], (node) => node.textContent)).toEqual([
+      'Timestamps aren’t available',
+      'This source video’s transcript does not include timing information.',
+    ])
+    expect(timestampPanel?.querySelectorAll('time')).toHaveLength(0)
+    expect(timestampPanel?.textContent).not.toMatch(/\b\d{1,2}:\d{2}\b/u)
+
+    await user.click(textTab)
+    expect(textTab).toHaveAttribute('aria-selected', 'true')
+    expect(search).toBeEnabled()
+    expect(search).toHaveValue('dune')
+    expect(within(dialog).getByText('2 of 4')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Next match' }))
+    expect(within(dialog).getByText('3 of 4')).toBeInTheDocument()
+
+    textTab.focus()
+    await user.keyboard('{ArrowRight}')
+    expect(timestampTab).toHaveFocus()
+    expect(timestampTab).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{ArrowLeft}')
+    expect(textTab).toHaveFocus()
+    expect(textTab).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{End}')
+    expect(timestampTab).toHaveFocus()
+    expect(timestampTab).toHaveAttribute('aria-selected', 'true')
+    await user.keyboard('{Home}')
+    expect(textTab).toHaveFocus()
+    expect(textTab).toHaveAttribute('aria-selected', 'true')
+
+    await user.keyboard('{Escape}')
+  })
+
+  it('should disable transcript search and describe the source when transcript text is blank', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/extractions', () =>
+        HttpResponse.json({
+          ...EXTRACTION_FIXTURE,
+          transcript: { ...EXTRACTION_FIXTURE.transcript, text: '   ' },
+        }),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const dialog = await openTranscript(user)
+    expect(within(dialog).getByText('Transcript text is unavailable for this source video.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Search the transcript')).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Previous match' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Next match' })).toBeDisabled()
+    expect(within(dialog).queryByRole('heading', { name: 'No matches' })).not.toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+  })
+
+  it('should trap focus and restore page state when the transcript closes through every modal path', async () => {
+    const user = userEvent.setup()
+    document.body.style.overflow = 'clip'
+    document.body.style.position = 'relative'
+    document.body.style.top = '13px'
+    document.body.style.width = '90%'
+    document.body.style.paddingRight = '4px'
+    setPageScrollY(360)
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const transcriptOpener = await screen.findByRole('button', { name: 'View transcript' })
+    const dialog = await openTranscript(user)
+    const search = screen.getByLabelText('Search the transcript')
+    const closeButton = within(dialog).getByRole('button', { name: 'Close transcript' })
+
+    expect(search).toHaveFocus()
+    expect(document.body.style.overflow).toBe('hidden')
+    expect(document.body.style.position).toBe('fixed')
+    expect(document.body.style.top).toBe('-360px')
+    expect(document.body.style.width).toBe('100%')
+    closeButton.focus()
+    await user.keyboard('{Shift>}{Tab}{/Shift}')
+    expect(search).toHaveFocus()
+    await user.keyboard('{Tab}')
+    expect(closeButton).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Transcript' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(transcriptOpener).toHaveFocus()
+      expect(window.scrollTo).toHaveBeenLastCalledWith(0, 360)
+    })
+    expect(document.body.style.overflow).toBe('clip')
+    expect(document.body.style.position).toBe('relative')
+    expect(document.body.style.top).toBe('13px')
+    expect(document.body.style.width).toBe('90%')
+    expect(document.body.style.paddingRight).toBe('4px')
+
+    const closeControlDialog = await openTranscript(user)
+    await user.click(within(closeControlDialog).getByRole('button', { name: 'Close transcript' }))
+    expect(screen.queryByRole('dialog', { name: 'Transcript' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(transcriptOpener).toHaveFocus()
+    })
+
+    await openTranscript(user)
+    fireEvent.pointerDown(screen.getByTestId('transcript-modal-scrim'))
+    expect(screen.queryByRole('dialog', { name: 'Transcript' })).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(transcriptOpener).toHaveFocus()
+    })
+  })
+
+  it('should use immediate match scrolling when reduced motion is preferred', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })))
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const dialog = await openTranscript(user)
+    await user.type(screen.getByLabelText('Search the transcript'), 'dune')
+
+    await waitFor(() => {
+      expect(within(dialog).getByText('1 of 4')).toBeInTheDocument()
+      expect(scrollIntoViewMock).toHaveBeenLastCalledWith({ block: 'center', behavior: 'auto' })
+    })
+
+    await user.keyboard('{Escape}')
   })
 })
