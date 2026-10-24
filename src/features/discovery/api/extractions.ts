@@ -21,6 +21,26 @@ import type {
   UnknownTvSeriesMediaResult,
 } from '../model/discovery'
 
+export type ExtractionFailure = {
+  readonly kind:
+    | 'sourceInput'
+    | 'sourceUnavailable'
+    | 'durationLimit'
+    | 'inputTooLarge'
+    | 'transcriptUnavailable'
+    | 'temporaryTranscription'
+    | 'metadataProvider'
+    | 'catalogProvider'
+    | 'processing'
+    | 'pipelineTimeout'
+    | 'internal'
+    | 'network'
+    | 'unexpectedResponse'
+  readonly heading: string
+  readonly guidance: string
+  readonly canRetry: boolean
+}
+
 type BackendPlatform = 'youtube' | 'instagram' | 'facebook' | 'tiktok' | 'x'
 type BackendTranscriptMethod = 'youtube_captions' | 'whisper' | 'text_submission'
 type BackendResultStatus = 'resolved' | 'unresolved'
@@ -941,19 +961,201 @@ const parseExtractionResponse = (value: unknown): DiscoveryData => {
   }
 }
 
-export const extractSourceVideo = async (url: string): Promise<DiscoveryData> => {
-  const response = await fetch('/api/extractions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ url }),
-  })
+const SOURCE_INPUT_FAILURE = {
+  kind: 'sourceInput',
+  heading: 'We can’t use that source video',
+  guidance: 'Check the link or try a different source video.',
+  canRetry: false,
+} as const satisfies ExtractionFailure
 
-  if (!response.ok) {
-    throw new Error('Extraction request failed.')
+const SOURCE_UNAVAILABLE_FAILURE = {
+  kind: 'sourceUnavailable',
+  heading: 'We couldn’t access that source video',
+  guidance: 'Check that the video is public and still available, or try a different link.',
+  canRetry: false,
+} as const satisfies ExtractionFailure
+
+const DURATION_LIMIT_FAILURE = {
+  kind: 'durationLimit',
+  heading: 'That source video is too long',
+  guidance: 'It exceeds Reelio’s supported length. Try a shorter video.',
+  canRetry: false,
+} as const satisfies ExtractionFailure
+
+const INPUT_TOO_LARGE_FAILURE = {
+  kind: 'inputTooLarge',
+  heading: 'That source video has too much content',
+  guidance: 'It exceeds Reelio’s supported processing limit. Try a shorter video.',
+  canRetry: false,
+} as const satisfies ExtractionFailure
+
+const TRANSCRIPT_UNAVAILABLE_FAILURE = {
+  kind: 'transcriptUnavailable',
+  heading: 'We couldn’t get a transcript for that source video',
+  guidance: 'Check the link or try a different source video.',
+  canRetry: false,
+} as const satisfies ExtractionFailure
+
+const TEMPORARY_TRANSCRIPTION_FAILURE = {
+  kind: 'temporaryTranscription',
+  heading: 'Transcription is temporarily unavailable',
+  guidance: 'Try again in a moment.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const METADATA_PROVIDER_FAILURE = {
+  kind: 'metadataProvider',
+  heading: 'We couldn’t access the source video’s details',
+  guidance: 'Try again in a moment.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const CATALOG_PROVIDER_FAILURE = {
+  kind: 'catalogProvider',
+  heading: 'The media catalogs are temporarily unavailable',
+  guidance: 'Try again in a moment.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const PROCESSING_FAILURE = {
+  kind: 'processing',
+  heading: 'We couldn’t finish processing the source video',
+  guidance: 'Try again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const PIPELINE_TIMEOUT_FAILURE = {
+  kind: 'pipelineTimeout',
+  heading: 'Processing took too long',
+  guidance: 'Try the source video again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const INTERNAL_FAILURE = {
+  kind: 'internal',
+  heading: 'Something went wrong while processing the source video',
+  guidance: 'Try again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const NETWORK_FAILURE = {
+  kind: 'network',
+  heading: 'We couldn’t reach Reelio',
+  guidance: 'Check your connection and try again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const UNEXPECTED_RESPONSE_FAILURE = {
+  kind: 'unexpectedResponse',
+  heading: 'We received an unexpected response',
+  guidance: 'Try again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
+const DOMAIN_FAILURES: Readonly<Record<string, ExtractionFailure>> = {
+  invalid_source: SOURCE_INPUT_FAILURE,
+  unsupported_platform: SOURCE_INPUT_FAILURE,
+  source_unavailable: SOURCE_UNAVAILABLE_FAILURE,
+  duration_limit_exceeded: DURATION_LIMIT_FAILURE,
+  interpretation_input_too_large: INPUT_TOO_LARGE_FAILURE,
+  transcription_failed: TRANSCRIPT_UNAVAILABLE_FAILURE,
+  transcription_unavailable: TEMPORARY_TRANSCRIPTION_FAILURE,
+  metadata_provider_failed: METADATA_PROVIDER_FAILURE,
+  catalog_provider_failed: CATALOG_PROVIDER_FAILURE,
+  enrichment_failed: CATALOG_PROVIDER_FAILURE,
+  mention_interpretation_failed: PROCESSING_FAILURE,
+  invalid_llm_response: PROCESSING_FAILURE,
+  pipeline_timeout: PIPELINE_TIMEOUT_FAILURE,
+  internal_error: INTERNAL_FAILURE,
+}
+
+class ExtractionRequestError extends Error {
+  readonly failure: ExtractionFailure
+
+  constructor(failure: ExtractionFailure) {
+    super(failure.heading)
+    this.name = 'ExtractionRequestError'
+    this.failure = failure
+  }
+}
+
+const getFailureFromErrorPayload = (payload: unknown): ExtractionFailure => {
+  if (!isRecord(payload)) {
+    return UNEXPECTED_RESPONSE_FAILURE
   }
 
-  const payload: unknown = await response.json()
-  return parseExtractionResponse(payload)
+  const error = payload.error
+  if (
+    isRecord(error) &&
+    typeof error.code === 'string' &&
+    typeof error.message === 'string'
+  ) {
+    return DOMAIN_FAILURES[error.code] ?? UNEXPECTED_RESPONSE_FAILURE
+  }
+
+  return Object.hasOwn(payload, 'detail') ? SOURCE_INPUT_FAILURE : UNEXPECTED_RESPONSE_FAILURE
+}
+
+const readJsonPayload = async ({
+  response,
+  signal,
+}: {
+  readonly response: Response
+  readonly signal: AbortSignal
+}): Promise<unknown> => {
+  try {
+    return await response.json()
+  } catch (error) {
+    if (signal.aborted) {
+      throw error
+    }
+
+    throw new ExtractionRequestError(UNEXPECTED_RESPONSE_FAILURE)
+  }
+}
+
+export const getExtractionFailure = (error: unknown): ExtractionFailure =>
+  error instanceof ExtractionRequestError ? error.failure : UNEXPECTED_RESPONSE_FAILURE
+
+export const extractSourceVideo = async ({
+  url,
+  signal,
+}: {
+  readonly url: string
+  readonly signal: AbortSignal
+}): Promise<DiscoveryData> => {
+  let response: Response
+
+  try {
+    response = await fetch('/api/extractions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+      signal,
+    })
+  } catch (error) {
+    if (signal.aborted) {
+      throw error
+    }
+
+    throw new ExtractionRequestError(NETWORK_FAILURE)
+  }
+
+  const payload = await readJsonPayload({ response, signal })
+
+  if (!response.ok) {
+    throw new ExtractionRequestError(getFailureFromErrorPayload(payload))
+  }
+
+  try {
+    return parseExtractionResponse(payload)
+  } catch (error) {
+    if (signal.aborted) {
+      throw error
+    }
+
+    throw new ExtractionRequestError(UNEXPECTED_RESPONSE_FAILURE)
+  }
 }

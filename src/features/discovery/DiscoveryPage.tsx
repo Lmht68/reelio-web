@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState, type FormEvent } from 'react'
-import { extractSourceVideo } from './api/extractions'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { extractSourceVideo, getExtractionFailure, type ExtractionFailure } from './api/extractions'
 import { ResultBrowser } from './components/ResultBrowser'
 import { TranscriptModal } from './components/TranscriptModal'
 import {
@@ -14,10 +14,10 @@ import './DiscoveryPage.css'
 
 type DiscoveryState =
   | { status: 'idle' }
-  | { status: 'loading'; submittedUrl: string }
+  | { status: 'loading'; submittedUrl: string; requestId: number }
   | { status: 'success'; data: DiscoveryData; selectedCategory: MediaCategory }
   | { status: 'empty'; data: DiscoveryData }
-  | { status: 'failure'; message: string }
+  | { status: 'failure'; submittedUrl: string; failure: ExtractionFailure }
 
 type SourceVideoSummaryCardProps = {
   sourceVideo: SourceVideoSummary
@@ -77,6 +77,11 @@ export const DiscoveryPage = () => {
   const [discoveryState, setDiscoveryState] = useState<DiscoveryState>({ status: 'idle' })
   const inputRef = useRef<HTMLInputElement>(null)
   const howItWorksHeadingRef = useRef<HTMLHeadingElement>(null)
+  const isPendingRef = useRef(false)
+  const requestIdRef = useRef(0)
+  const activeRequestRef = useRef<{ requestId: number; controller: AbortController } | undefined>(
+    undefined,
+  )
   const isLoading = discoveryState.status === 'loading'
 
   const handleUrlChange = (value: string) => {
@@ -84,10 +89,52 @@ export const DiscoveryPage = () => {
     setGuidance(undefined)
   }
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  const runExtraction = useCallback(async (submittedUrl: string): Promise<void> => {
+    if (isPendingRef.current) {
+      return
+    }
+
+    isPendingRef.current = true
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
+    const controller = new AbortController()
+    activeRequestRef.current = { requestId, controller }
+    setDiscoveryState({ status: 'loading', submittedUrl, requestId })
+
+    try {
+      const data = await extractSourceVideo({ url: submittedUrl, signal: controller.signal })
+      if (activeRequestRef.current?.requestId !== requestId) {
+        return
+      }
+
+      const selectedCategory = getFirstNonEmptyMediaCategory(data.categorizedResults)
+      setDiscoveryState(
+        selectedCategory === undefined
+          ? { status: 'empty', data }
+          : { status: 'success', data, selectedCategory },
+      )
+    } catch (error) {
+      if (controller.signal.aborted || activeRequestRef.current?.requestId !== requestId) {
+        return
+      }
+
+      setDiscoveryState({
+        status: 'failure',
+        submittedUrl,
+        failure: getExtractionFailure(error),
+      })
+    } finally {
+      if (activeRequestRef.current?.requestId === requestId) {
+        isPendingRef.current = false
+        activeRequestRef.current = undefined
+      }
+    }
+  }, [])
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (isLoading) {
+    if (isPendingRef.current) {
       return
     }
 
@@ -99,23 +146,27 @@ export const DiscoveryPage = () => {
     }
 
     setGuidance(undefined)
-    setDiscoveryState({ status: 'loading', submittedUrl: validation.url })
-
-    try {
-      const data = await extractSourceVideo(validation.url)
-      const selectedCategory = getFirstNonEmptyMediaCategory(data.categorizedResults)
-      setDiscoveryState(
-        selectedCategory === undefined
-          ? { status: 'empty', data }
-          : { status: 'success', data, selectedCategory },
-      )
-    } catch {
-      setDiscoveryState({
-        status: 'failure',
-        message: 'We couldn’t complete the discovery. Please try again.',
-      })
-    }
+    void runExtraction(validation.url)
   }
+
+  const handleRetry = () => {
+    if (discoveryState.status !== 'failure' || !discoveryState.failure.canRetry) {
+      return
+    }
+
+    setUrlValue(discoveryState.submittedUrl)
+    void runExtraction(discoveryState.submittedUrl)
+  }
+
+  useEffect(
+    () => () => {
+      requestIdRef.current += 1
+      activeRequestRef.current?.controller.abort()
+      activeRequestRef.current = undefined
+      isPendingRef.current = false
+    },
+    [],
+  )
 
   const handleSelectCategory = (selectedCategory: MediaCategory) => {
     setDiscoveryState((currentState) => {
@@ -227,9 +278,19 @@ export const DiscoveryPage = () => {
             </>
           ) : null}
           {discoveryState.status === 'failure' ? (
-            <p className="discovery-result_failure" role="alert">
-              {discoveryState.message}
-            </p>
+            <section
+              className="discovery-result_failure"
+              role="alert"
+              aria-labelledby="discovery-failure-heading"
+            >
+              <h2 id="discovery-failure-heading">{discoveryState.failure.heading}</h2>
+              <p>{discoveryState.failure.guidance}</p>
+              {discoveryState.failure.canRetry ? (
+                <button className="discovery-result_retry" type="button" onClick={handleRetry}>
+                  Try again
+                </button>
+              ) : null}
+            </section>
           ) : null}
         </section>
       </main>

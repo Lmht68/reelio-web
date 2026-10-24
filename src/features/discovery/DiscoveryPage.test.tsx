@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
@@ -355,6 +355,93 @@ const MUSIC_ONLY_FIXTURE = {
     tracks: [EXTRACTION_FIXTURE.results.tracks[0]],
   },
 }
+
+const DOMAIN_FAILURE_CASES = [
+  {
+    code: 'invalid_source',
+    heading: 'We can’t use that source video',
+    guidance: 'Check the link or try a different source video.',
+    canRetry: false,
+  },
+  {
+    code: 'unsupported_platform',
+    heading: 'We can’t use that source video',
+    guidance: 'Check the link or try a different source video.',
+    canRetry: false,
+  },
+  {
+    code: 'source_unavailable',
+    heading: 'We couldn’t access that source video',
+    guidance: 'Check that the video is public and still available, or try a different link.',
+    canRetry: false,
+  },
+  {
+    code: 'duration_limit_exceeded',
+    heading: 'That source video is too long',
+    guidance: 'It exceeds Reelio’s supported length. Try a shorter video.',
+    canRetry: false,
+  },
+  {
+    code: 'interpretation_input_too_large',
+    heading: 'That source video has too much content',
+    guidance: 'It exceeds Reelio’s supported processing limit. Try a shorter video.',
+    canRetry: false,
+  },
+  {
+    code: 'transcription_failed',
+    heading: 'We couldn’t get a transcript for that source video',
+    guidance: 'Check the link or try a different source video.',
+    canRetry: false,
+  },
+  {
+    code: 'transcription_unavailable',
+    heading: 'Transcription is temporarily unavailable',
+    guidance: 'Try again in a moment.',
+    canRetry: true,
+  },
+  {
+    code: 'metadata_provider_failed',
+    heading: 'We couldn’t access the source video’s details',
+    guidance: 'Try again in a moment.',
+    canRetry: true,
+  },
+  {
+    code: 'catalog_provider_failed',
+    heading: 'The media catalogs are temporarily unavailable',
+    guidance: 'Try again in a moment.',
+    canRetry: true,
+  },
+  {
+    code: 'enrichment_failed',
+    heading: 'The media catalogs are temporarily unavailable',
+    guidance: 'Try again in a moment.',
+    canRetry: true,
+  },
+  {
+    code: 'mention_interpretation_failed',
+    heading: 'We couldn’t finish processing the source video',
+    guidance: 'Try again.',
+    canRetry: true,
+  },
+  {
+    code: 'invalid_llm_response',
+    heading: 'We couldn’t finish processing the source video',
+    guidance: 'Try again.',
+    canRetry: true,
+  },
+  {
+    code: 'pipeline_timeout',
+    heading: 'Processing took too long',
+    guidance: 'Try the source video again.',
+    canRetry: true,
+  },
+  {
+    code: 'internal_error',
+    heading: 'Something went wrong while processing the source video',
+    guidance: 'Try again.',
+    canRetry: true,
+  },
+] as const
 
 const extractionRequests: Array<{ body: unknown; contentType: string | null }> = []
 const server = setupServer(
@@ -1142,7 +1229,7 @@ describe('DiscoveryPage', () => {
     expect(musicTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  it('should render directional empty copy without tabs or error styling when a successful extraction has no results', async () => {
+  it('should render directional empty copy without alerts or retry when a successful extraction has no results', async () => {
     const user = userEvent.setup()
 
     server.use(http.post('/api/extractions', () => HttpResponse.json(EMPTY_EXTRACTION_FIXTURE)))
@@ -1160,43 +1247,332 @@ describe('DiscoveryPage', () => {
     ).toBeInTheDocument()
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
   })
 
-  it('should show a generic failure and restore controls when the extraction request fails', async () => {
+  it.each(DOMAIN_FAILURE_CASES)(
+    'should render normalized recovery feedback when the backend returns $code',
+    async ({ code, heading, guidance, canRetry }) => {
+      const user = userEvent.setup()
+
+      server.use(
+        http.post('/api/extractions', () =>
+          HttpResponse.json(
+            { error: { code, message: 'Backend details must stay hidden' } },
+            { status: 503 },
+          ),
+        ),
+      )
+
+      render(<DiscoveryPage />)
+      await submitSourceVideo(user)
+
+      const alert = await screen.findByRole('alert')
+      expect(within(alert).getByRole('heading', { name: heading })).toBeInTheDocument()
+      expect(within(alert).getByText(guidance)).toBeInTheDocument()
+      expect(screen.queryByText('Backend details must stay hidden')).not.toBeInTheDocument()
+      expect(within(alert).queryByRole('button', { name: 'Try again' })).toEqual(
+        canRetry ? expect.any(HTMLButtonElement) : null,
+      )
+      expect(screen.getByLabelText('Video URL')).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Discover' })).toBeEnabled()
+    },
+  )
+
+  it('should explain unusable source without retry when FastAPI returns validation detail', async () => {
     const user = userEvent.setup()
 
     server.use(
       http.post('/api/extractions', () =>
-        HttpResponse.json({ error: { code: 'source_unavailable', message: 'Unavailable' } }, { status: 502 }),
+        HttpResponse.json({ detail: [{ msg: 'The backend details must stay hidden' }] }, { status: 422 }),
       ),
     )
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'We couldn’t complete the discovery. Please try again.',
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We can’t use that source video' })).toBeInTheDocument()
+    expect(
+      within(alert).getByText('Check the link or try a different source video.'),
+    ).toBeInTheDocument()
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+  })
+
+  it('should render unexpected-response recovery when a failure body is not JSON', async () => {
+    const user = userEvent.setup()
+
+    server.use(
+      http.post('/api/extractions', () => new HttpResponse('Service temporarily unavailable', { status: 503 })),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We received an unexpected response' })).toBeInTheDocument()
+    expect(within(alert).getByText('Try again.')).toBeInTheDocument()
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('should render unexpected-response recovery when a successful response lacks required extraction fields', async () => {
+    const user = userEvent.setup()
+
+    server.use(http.post('/api/extractions', () => HttpResponse.json({ source: { platform: 'youtube' } })))
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We received an unexpected response' })).toBeInTheDocument()
+    expect(within(alert).getByText('Try again.')).toBeInTheDocument()
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Source video' })).not.toBeInTheDocument()
+  })
+
+  it('should render network recovery when the extraction request rejects', async () => {
+    const user = userEvent.setup()
+
+    server.use(http.post('/api/extractions', () => HttpResponse.error()))
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We couldn’t reach Reelio' })).toBeInTheDocument()
+    expect(within(alert).getByText('Check your connection and try again.')).toBeInTheDocument()
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
+  })
+
+  it('should retry the same submitted URL and render success when a recoverable failure is retried', async () => {
+    const user = userEvent.setup()
+    const { promise: retryResponseGate, resolve: releaseRetryResponse } = Promise.withResolvers<void>()
+    let attempt = 0
+
+    server.use(
+      http.post('/api/extractions', async ({ request }) => {
+        extractionRequests.push({
+          body: await request.json(),
+          contentType: request.headers.get('content-type'),
+        })
+        attempt += 1
+        if (attempt === 1) {
+          return HttpResponse.json(
+            { error: { code: 'transcription_unavailable', message: 'Backend details must stay hidden' } },
+            { status: 503 },
+          )
+        }
+
+        await retryResponseGate
+        return HttpResponse.json(EXTRACTION_FIXTURE)
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    expect(await screen.findByRole('heading', { name: 'Transcription is temporarily unavailable' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Video URL')).toHaveValue(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    )
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    releaseRetryResponse()
+    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    expect(extractionRequests.map(({ body }) => body)).toEqual([
+      { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+      { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+    ])
+  })
+
+  it('should restore the form when a retry receives another normalized failure', async () => {
+    const user = userEvent.setup()
+    const { promise: retryResponseGate, resolve: releaseRetryResponse } = Promise.withResolvers<void>()
+    let attempt = 0
+
+    server.use(
+      http.post('/api/extractions', async () => {
+        attempt += 1
+        if (attempt === 1) {
+          return HttpResponse.json(
+            { error: { code: 'transcription_unavailable', message: 'Backend details must stay hidden' } },
+            { status: 503 },
+          )
+        }
+
+        await retryResponseGate
+        return HttpResponse.json(
+          { error: { code: 'pipeline_timeout', message: 'Backend details must stay hidden' } },
+          { status: 504 },
+        )
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    expect(await screen.findByRole('heading', { name: 'Transcription is temporarily unavailable' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    releaseRetryResponse()
+    expect(await screen.findByRole('heading', { name: 'Processing took too long' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Video URL')).toHaveValue(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
     )
     expect(screen.getByLabelText('Video URL')).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Discover' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
   })
 
-  it('should show a generic failure when a successful response lacks required extraction fields', async () => {
-    const user = userEvent.setup()
+  it('should send one request when the form is submitted twice before React rerenders', async () => {
+    const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
 
     server.use(
-      http.post('/api/extractions', () =>
-        HttpResponse.json({ source: { platform: 'youtube' } }),
-      ),
+      http.post('/api/extractions', async ({ request }) => {
+        extractionRequests.push({
+          body: await request.json(),
+          contentType: request.headers.get('content-type'),
+        })
+        await responseGate
+        return HttpResponse.json(EXTRACTION_FIXTURE)
+      }),
     )
 
     render(<DiscoveryPage />)
+    const input = screen.getByLabelText('Video URL')
+    const form = input.closest('form')
+    if (form === null) {
+      throw new Error('Discovery form is missing.')
+    }
+
+    fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+
+    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    await waitFor(() => {
+      expect(extractionRequests).toHaveLength(1)
+    })
+
+    releaseResponse()
+    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+  })
+
+  it('should keep loading without a client timeout when extraction remains pending for 30 minutes', async () => {
+    const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
+    vi.useFakeTimers()
+
+    try {
+      server.use(
+        http.post('/api/extractions', async ({ request }) => {
+          extractionRequests.push({
+            body: await request.json(),
+            contentType: request.headers.get('content-type'),
+          })
+          await responseGate
+          return HttpResponse.json(EXTRACTION_FIXTURE)
+        }),
+      )
+
+      render(<DiscoveryPage />)
+      const input = screen.getByLabelText('Video URL')
+      const form = input.closest('form')
+      if (form === null) {
+        throw new Error('Discovery form is missing.')
+      }
+
+      fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
+      fireEvent.submit(form)
+
+      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+      })
+      expect(extractionRequests).toHaveLength(1)
+      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+
+      releaseResponse()
+    } finally {
+      vi.useRealTimers()
+    }
+
+    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+  })
+
+  it('should abort the active request without an alert when the page unmounts', async () => {
+    const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
+    let requestSignal: AbortSignal | undefined
+    const user = userEvent.setup()
+
+    server.use(
+      http.post('/api/extractions', async ({ request }) => {
+        requestSignal = request.signal
+        await responseGate
+        return HttpResponse.json(EXTRACTION_FIXTURE)
+      }),
+    )
+
+    const { unmount } = render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(
-      'We couldn’t complete the discovery. Please try again.',
+    await waitFor(() => {
+      expect(requestSignal).toBeDefined()
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    unmount()
+
+    expect(requestSignal?.aborted).toBe(true)
+    releaseResponse()
+  })
+
+  it('should preserve the newest result when an obsolete keyed page request finishes last', async () => {
+    const { promise: firstResponseGate, resolve: releaseFirstResponse } = Promise.withResolvers<void>()
+    const { promise: secondResponseGate, resolve: releaseSecondResponse } = Promise.withResolvers<void>()
+    const user = userEvent.setup()
+    let requestCount = 0
+    const olderFixture = {
+      ...EXTRACTION_FIXTURE,
+      source: { ...EXTRACTION_FIXTURE.source, title: 'Older source video' },
+    }
+    const newerFixture = {
+      ...EXTRACTION_FIXTURE,
+      source: { ...EXTRACTION_FIXTURE.source, title: 'Newer source video' },
+    }
+
+    server.use(
+      http.post('/api/extractions', async () => {
+        requestCount += 1
+        if (requestCount === 1) {
+          await firstResponseGate
+          return HttpResponse.json(olderFixture)
+        }
+
+        await secondResponseGate
+        return HttpResponse.json(newerFixture)
+      }),
     )
-    expect(screen.queryByRole('heading', { name: 'Source video' })).not.toBeInTheDocument()
+
+    const page = render(<DiscoveryPage key="initial" />)
+    await submitSourceVideo(user)
+    await waitFor(() => {
+      expect(requestCount).toBe(1)
+    })
+
+    page.rerender(<DiscoveryPage key="replacement" />)
+    await submitSourceVideo(user)
+    await waitFor(() => {
+      expect(requestCount).toBe(2)
+    })
+
+    releaseSecondResponse()
+    expect(await screen.findByRole('heading', { name: 'Newer source video' })).toBeInTheDocument()
+
+    releaseFirstResponse()
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Newer source video' })).toBeInTheDocument()
+    })
   })
 
   it('should open the normalized transcript when its source-summary action is activated', async () => {

@@ -152,7 +152,32 @@
   font-size: 18px;
 }
 
-.discovery-result_failure {
+.discovery-result_failure h2 {
+  margin: 0;
+  color: var(--color-text);
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.discovery-result_failure p {
+  max-width: 500px;
+  margin: 6px auto 0;
+  color: var(--color-muted);
+}
+
+.discovery-result_retry {
+  min-height: 44px;
+  margin-top: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding-inline: 16px;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.discovery-result_retry:hover {
+  border-color: var(--color-accent);
   color: var(--color-accent);
 }
 
