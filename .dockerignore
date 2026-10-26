@@ -1,0 +1,23 @@
+# Default-deny Docker build context.
+*
+
+# Required build inputs.
+!/.dockerignore
+!/Dockerfile
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/tsconfig.app.json
+!/tsconfig.node.json
+!/vite.config.ts
+!/index.html
+!/src/
+!/src/**
+!/public/
+!/public/**
+!/nginx/
+!/nginx/**
+
+# Production builds do not need test sources.
+/src/**/*.test.*
+/src/test/
