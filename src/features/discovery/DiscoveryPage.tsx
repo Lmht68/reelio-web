@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { extractSourceVideo, getExtractionFailure, type ExtractionFailure } from './api/extractions'
+import {
+  extractSourceVideo,
+  getExtractionFailure,
+  type ExtractionFailure,
+} from './api/extractions'
 import { ResultBrowser } from './components/ResultBrowser'
 import { TranscriptModal } from './components/TranscriptModal'
 import {
@@ -35,6 +39,16 @@ const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryC
 
   return (
     <section className="source-video-summary" aria-labelledby="source-video-summary-heading">
+      <div
+        className="source-video-summary_placeholder"
+        role="img"
+        aria-label="Source video thumbnail unavailable"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <path d="m10 9 5 3-5 3Z" />
+        </svg>
+      </div>
       <div className="source-video-summary_content">
         <h2 id="source-video-summary-heading">
           <a
@@ -46,20 +60,22 @@ const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryC
             {title}
           </a>
         </h2>
-        <div className="source-video-summary_metadata">
-          <span>{sourceVideo.platformLabel}</span>
-        </div>
-        <button
-          ref={transcriptOpenerRef}
-          className="source-video-summary_transcript-button"
-          type="button"
-          aria-haspopup="dialog"
-          aria-expanded={isTranscriptOpen}
-          onClick={() => setIsTranscriptOpen(true)}
-        >
-          View transcript
-        </button>
+        <p className="source-video-summary_metadata">
+          {sourceVideo.channel === undefined
+            ? sourceVideo.platformLabel
+            : `by ${sourceVideo.channel} · ${sourceVideo.platformLabel}`}
+        </p>
       </div>
+      <button
+        ref={transcriptOpenerRef}
+        className="source-video-summary_transcript-button"
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={isTranscriptOpen}
+        onClick={() => setIsTranscriptOpen(true)}
+      >
+        Read transcript
+      </button>
       {isTranscriptOpen ? (
         <TranscriptModal
           transcript={transcript}

@@ -471,7 +471,7 @@ const openDetails = async (user: UserEvent, cardName: string) => {
 }
 
 const openTranscript = async (user: UserEvent) => {
-  await user.click(await screen.findByRole('button', { name: 'View transcript' }))
+  await user.click(await screen.findByRole('button', { name: 'Read transcript' }))
   return screen.getByRole('dialog', { name: 'Transcript' })
 }
 
@@ -666,11 +666,14 @@ describe('DiscoveryPage', () => {
     expect(
       await within(resultRegion).findByRole('heading', { name: 'Never Gonna Give You Up' }),
     ).toBeInTheDocument()
+    expect(
+      within(resultRegion).getByRole('img', { name: 'Source video thumbnail unavailable' }),
+    ).toBeInTheDocument()
     const titleLink = within(resultRegion).getByRole('link', { name: 'Never Gonna Give You Up' })
     expect(titleLink).toHaveAttribute('href', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
     expect(titleLink).toHaveAttribute('target', '_blank')
     expect(titleLink).toHaveAttribute('rel', 'noreferrer')
-    expect(within(resultRegion).getByText('YouTube')).toBeInTheDocument()
+    expect(within(resultRegion).getByText('by Rick Astley · YouTube')).toBeInTheDocument()
     expect(
       screen.getAllByRole('tab').map((tab) => tab.textContent),
     ).toEqual(['Movies & TV2', 'Music2', 'Books1', 'Unknown5'])
@@ -700,7 +703,7 @@ describe('DiscoveryPage', () => {
 
     const resultRegion = screen.getByRole('region', { name: 'Discovery result' })
     expect(await within(resultRegion).findByRole('heading', { name: 'Source video' })).toBeInTheDocument()
-    expect(within(resultRegion).getByText('YouTube')).toBeInTheDocument()
+    expect(within(resultRegion).getByText('by Rick Astley · YouTube')).toBeInTheDocument()
   })
 
   it('should expose complete accessible card names and visible screen metadata when the visitor switches media categories', async () => {
@@ -876,6 +879,7 @@ describe('DiscoveryPage', () => {
     expect(movieDrawer).toHaveAttribute('aria-modal', 'true')
     expect(within(movieDrawer).getByRole('heading', { name: 'Dune: Part One' })).toBeInTheDocument()
     expect(within(movieDrawer).getByText('2021')).toBeInTheDocument()
+    expect(within(movieDrawer).getByText('TMDB score', { selector: 'dt' })).toBeInTheDocument()
     expect(within(movieDrawer).getByLabelText('Score 7.8')).toHaveTextContent('7.8')
     expect(
       within(movieDrawer).getByText('Paul Atreides faces his destiny on Arrakis.'),
@@ -883,13 +887,13 @@ describe('DiscoveryPage', () => {
     expect(within(movieDrawer).getByText('Directors')).toBeInTheDocument()
     expect(within(movieDrawer).getByText('Denis Villeneuve')).toBeInTheDocument()
     const tmdbLink = within(movieDrawer).getByRole('link', { name: 'Open TMDB' })
+    expect(tmdbLink).toHaveTextContent('TMDB')
     expect(tmdbLink).toHaveAttribute('href', 'https://www.themoviedb.org/movie/438631')
     expect(tmdbLink).toHaveAttribute('target', '_blank')
     expect(tmdbLink).toHaveAttribute('rel', 'noreferrer')
-    expect(within(movieDrawer).getByRole('link', { name: 'Open IMDb' })).toHaveAttribute(
-      'href',
-      'https://www.imdb.com/title/tt1160419/',
-    )
+    const imdbLink = within(movieDrawer).getByRole('link', { name: 'Open IMDb' })
+    expect(imdbLink).toHaveTextContent('IMDb')
+    expect(imdbLink).toHaveAttribute('href', 'https://www.imdb.com/title/tt1160419/')
     await user.click(within(movieDrawer).getByRole('button', { name: 'Close details' }))
 
     const tvDrawer = await openDetails(
@@ -897,20 +901,19 @@ describe('DiscoveryPage', () => {
       'The Last of Us, 2023 to 2025, score 8.7, open details',
     )
     expect(within(tvDrawer).getByText('2023–2025')).toBeInTheDocument()
+    expect(within(tvDrawer).getByText('TMDB score', { selector: 'dt' })).toBeInTheDocument()
     expect(within(tvDrawer).getByLabelText('Score 8.7')).toHaveTextContent('8.7')
     expect(
       within(tvDrawer).getByText('A smuggler escorts a teenager across a ruined America.'),
     ).toBeInTheDocument()
     expect(within(tvDrawer).getByText('Creators')).toBeInTheDocument()
     expect(within(tvDrawer).getByText('Craig Mazin, Neil Druckmann')).toBeInTheDocument()
-    expect(within(tvDrawer).getByRole('link', { name: 'Open TMDB' })).toHaveAttribute(
-      'href',
-      'https://www.themoviedb.org/tv/100088',
-    )
-    expect(within(tvDrawer).getByRole('link', { name: 'Open IMDb' })).toHaveAttribute(
-      'href',
-      'https://www.imdb.com/title/tt3581920/',
-    )
+    const tvTmdbLink = within(tvDrawer).getByRole('link', { name: 'Open TMDB' })
+    expect(tvTmdbLink).toHaveTextContent('TMDB')
+    expect(tvTmdbLink).toHaveAttribute('href', 'https://www.themoviedb.org/tv/100088')
+    const tvImdbLink = within(tvDrawer).getByRole('link', { name: 'Open IMDb' })
+    expect(tvImdbLink).toHaveTextContent('IMDb')
+    expect(tvImdbLink).toHaveAttribute('href', 'https://www.imdb.com/title/tt3581920/')
     await user.click(within(tvDrawer).getByRole('button', { name: 'Close details' }))
 
     await user.click(screen.getByRole('tab', { name: 'Music, 2 results' }))
@@ -922,10 +925,9 @@ describe('DiscoveryPage', () => {
     expect(within(trackDrawer).getByText('Discovery (Deluxe Edition)')).toBeInTheDocument()
     expect(within(trackDrawer).getByText('Artists')).toBeInTheDocument()
     expect(within(trackDrawer).getByText('Daft Punk')).toBeInTheDocument()
-    expect(within(trackDrawer).getByRole('link', { name: 'Open Spotify' })).toHaveAttribute(
-      'href',
-      'https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV',
-    )
+    const spotifyLink = within(trackDrawer).getByRole('link', { name: 'Open Spotify' })
+    expect(spotifyLink).toHaveTextContent('Spotify')
+    expect(spotifyLink).toHaveAttribute('href', 'https://open.spotify.com/track/0DiWol3AO6WpXZgp0goxAV')
     await user.click(within(trackDrawer).getByRole('button', { name: 'Close details' }))
 
     const releaseDrawer = await openDetails(
@@ -936,7 +938,9 @@ describe('DiscoveryPage', () => {
     expect(within(releaseDrawer).getByText('Album')).toBeInTheDocument()
     expect(within(releaseDrawer).getByText('Release date')).toBeInTheDocument()
     expect(within(releaseDrawer).getByText('February 26, 2001')).toBeInTheDocument()
-    expect(within(releaseDrawer).getByRole('link', { name: 'Open Spotify' })).toHaveAttribute(
+    const releaseSpotifyLink = within(releaseDrawer).getByRole('link', { name: 'Open Spotify' })
+    expect(releaseSpotifyLink).toHaveTextContent('Spotify')
+    expect(releaseSpotifyLink).toHaveAttribute(
       'href',
       'https://open.spotify.com/album/2noRn2Aes5aoNVsU6iWThc',
     )
@@ -948,10 +952,9 @@ describe('DiscoveryPage', () => {
     expect(within(bookDrawer).getByText('Jane Austen')).toBeInTheDocument()
     expect(within(bookDrawer).getByText('Publishers')).toBeInTheDocument()
     expect(within(bookDrawer).getByText('T. Egerton')).toBeInTheDocument()
-    expect(within(bookDrawer).getByRole('link', { name: 'Open Open Library' })).toHaveAttribute(
-      'href',
-      'https://openlibrary.org/works/OL66554W',
-    )
+    const openLibraryLink = within(bookDrawer).getByRole('link', { name: 'Open Open Library' })
+    expect(openLibraryLink).toHaveTextContent('Open Library')
+    expect(openLibraryLink).toHaveAttribute('href', 'https://openlibrary.org/works/OL66554W')
     await user.click(within(bookDrawer).getByRole('button', { name: 'Close details' }))
   })
 
@@ -1238,7 +1241,7 @@ describe('DiscoveryPage', () => {
     await submitSourceVideo(user)
 
     expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'View transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Read transcript' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'We didn’t find anything' })).toBeInTheDocument()
     expect(
       screen.getByText(
@@ -1581,7 +1584,7 @@ describe('DiscoveryPage', () => {
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    const transcriptOpener = await screen.findByRole('button', { name: 'View transcript' })
+    const transcriptOpener = await screen.findByRole('button', { name: 'Read transcript' })
     expect(transcriptOpener).toBeInTheDocument()
 
     const dialog = await openTranscript(user)
@@ -1769,7 +1772,7 @@ describe('DiscoveryPage', () => {
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
 
-    const transcriptOpener = await screen.findByRole('button', { name: 'View transcript' })
+    const transcriptOpener = await screen.findByRole('button', { name: 'Read transcript' })
     const dialog = await openTranscript(user)
     const search = screen.getByLabelText('Search the transcript')
     const closeButton = within(dialog).getByRole('button', { name: 'Close transcript' })

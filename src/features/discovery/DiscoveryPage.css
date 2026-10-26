@@ -62,7 +62,7 @@
 }
 
 .hero_description {
-  margin: 0 auto 56px;
+  margin: 0 auto 28px;
   color: var(--color-muted);
   font-size: 18px;
 }
@@ -213,14 +213,40 @@
 }
 
 .source-video-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
   border: 1px solid var(--color-border);
   border-radius: 16px;
-  padding: 18px 20px;
+  padding: 14px;
   background: var(--color-surface);
+}
+
+.source-video-summary_placeholder {
+  display: grid;
+  width: 112px;
+  height: 64px;
+  flex: none;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--color-accent-surface);
+  color: var(--color-muted);
+}
+
+.source-video-summary_placeholder svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
 }
 
 .source-video-summary_content {
   min-width: 0;
+  flex: 1 1 200px;
 }
 
 .source-video-summary_content h2 {
@@ -246,13 +272,15 @@
 }
 
 .source-video-summary_metadata {
+  margin: 0;
+  overflow-wrap: anywhere;
   color: var(--color-muted);
   font-size: 14px;
 }
 
 .source-video-summary_transcript-button {
   min-height: 44px;
-  margin-top: 12px;
+  margin-inline-start: auto;
   border: 1px solid var(--color-border);
   border-radius: 10px;
   padding: 0 16px;
@@ -265,6 +293,7 @@
   border-color: var(--color-accent);
   color: var(--color-accent);
 }
+
 
 .transcript-modal_scrim {
   position: fixed;
@@ -532,6 +561,7 @@
 .result-card:hover .result-artwork,
 .result-card:focus-visible .result-artwork {
   border-color: var(--color-accent);
+  transform: translateY(-3px);
 }
 
 .result-artwork {
@@ -541,6 +571,9 @@
   border: 1px solid var(--color-border);
   border-radius: 12px;
   background: var(--color-accent-surface);
+  transition:
+    border-color 150ms ease,
+    transform 150ms ease;
 }
 
 .result-artwork--portrait {
@@ -857,14 +890,15 @@
 
 .detail-drawer_provider-link {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
-  justify-content: center;
-  gap: 2px;
+  gap: 9px;
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  padding: 10px 10px;
+  padding: 0 14px 0 10px;
   background: var(--color-background);
   color: var(--color-text);
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -884,7 +918,6 @@
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.8;
-  margin-top: -8px;
 }
 
 .discovery-result_empty {
@@ -983,7 +1016,8 @@
   }
 
   .detail-drawer_scrim,
-  .detail-drawer {
+  .detail-drawer,
+  .result-artwork {
     transition: none;
   }
 }
@@ -1008,6 +1042,10 @@
 
   .discover-button {
     margin-top: 0;
+  }
+
+  .source-video-summary_content {
+    flex-basis: 160px;
   }
 
 

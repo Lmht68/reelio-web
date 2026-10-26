@@ -1124,6 +1124,7 @@ export const extractSourceVideo = async ({
   readonly url: string
   readonly signal: AbortSignal
 }): Promise<DiscoveryData> => {
+
   let response: Response
 
   try {

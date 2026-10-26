@@ -38,7 +38,7 @@ type ResultArtworkProps = {
 
 type DetailRowProps = {
   readonly label: string
-  readonly value: string
+  readonly value: ReactNode
 }
 
 const unknownClassificationLabel = (result: UnknownMediaResult): string => {
@@ -125,6 +125,7 @@ const ProviderLink = ({ href, provider }: ProviderLinkProps) => (
     title={`Open ${provider}`}
   >
     <ProviderIcon provider={provider} />
+    <span>{provider}</span>
     <svg className="detail-drawer_external-arrow" aria-hidden="true" viewBox="0 0 24 24">
       <path d="M7 17 17 7M9 7h8v8" />
     </svg>
@@ -151,15 +152,14 @@ const MovieDetails = ({ result }: { readonly result: Extract<MediaResult, { read
       <h3>{result.title}</h3>
       <div className="detail-drawer_summary">
         <span>{result.year}</span>
-        <span aria-hidden="true">·</span>
-        <Score score={result.tmdbScore} />
       </div>
       {description === '' ? null : <p className="detail-drawer_description">{description}</p>}
-      {result.directors.length === 0 ? null : (
-        <dl className="detail-drawer_rows">
+      <dl className="detail-drawer_rows">
+        {result.directors.length === 0 ? null : (
           <DetailRow label="Directors" value={namesLabel(result.directors)} />
-        </dl>
-      )}
+        )}
+        <DetailRow label="TMDB score" value={<Score score={result.tmdbScore} />} />
+      </dl>
       <ProviderLinks>
         <ProviderLink href={result.tmdbUrl} provider="TMDB" />
         {result.imdbUrl === undefined ? null : <ProviderLink href={result.imdbUrl} provider="IMDb" />}
@@ -185,15 +185,14 @@ const TvSeriesDetails = ({
       <h3>{result.title}</h3>
       <div className="detail-drawer_summary">
         <span>{years}</span>
-        <span aria-hidden="true">·</span>
-        <Score score={result.tmdbScore} />
       </div>
       {description === '' ? null : <p className="detail-drawer_description">{description}</p>}
-      {result.creators.length === 0 ? null : (
-        <dl className="detail-drawer_rows">
+      <dl className="detail-drawer_rows">
+        {result.creators.length === 0 ? null : (
           <DetailRow label="Creators" value={namesLabel(result.creators)} />
-        </dl>
-      )}
+        )}
+        <DetailRow label="TMDB score" value={<Score score={result.tmdbScore} />} />
+      </dl>
       <ProviderLinks>
         <ProviderLink href={result.tmdbUrl} provider="TMDB" />
         {result.imdbUrl === undefined ? null : <ProviderLink href={result.imdbUrl} provider="IMDb" />}
@@ -373,7 +372,7 @@ export const DetailDrawer = ({ isOpen, result, opener, onClose }: DetailDrawerPr
         inert={!isOpen}
         onPointerDown={handleScrimPointerDown}
       />
-      <aside
+      <section
         ref={drawerRef}
         className={`detail-drawer${isOpen ? ' detail-drawer--open' : ''}`}
         role="dialog"
@@ -399,7 +398,7 @@ export const DetailDrawer = ({ isOpen, result, opener, onClose }: DetailDrawerPr
         <div className="detail-drawer_body">
           <DrawerContent result={result} />
         </div>
-      </aside>
+      </section>
     </>
   )
 }
