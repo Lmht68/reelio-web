@@ -693,14 +693,6 @@
   font-weight: 650;
 }
 
-.result-card_explanation {
-  display: block;
-  margin: 8px 0 0;
-  color: var(--color-muted);
-  font-size: 13px;
-  line-height: 1.4;
-}
-
 .detail-drawer_scrim {
   position: fixed;
   inset: 0;

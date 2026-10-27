@@ -61,9 +61,7 @@ const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryC
           </a>
         </h2>
         <p className="source-video-summary_metadata">
-          {sourceVideo.channel === undefined
-            ? sourceVideo.platformLabel
-            : `by ${sourceVideo.channel} · ${sourceVideo.platformLabel}`}
+          {sourceVideo.platformLabel}
         </p>
       </div>
       <button

@@ -135,9 +135,6 @@ const UnknownResultCard = ({
       <span className="result-card_classification">{unknownClassificationLabel(result)}</span>
       <ResultMetadata result={result} />
       <span className="result-card_status-chip">Not identified</span>
-      <span className="result-card_explanation">
-        Reelio heard this mention but couldn’t match it to a catalog result.
-      </span>
     </span>
   </button>
 )
