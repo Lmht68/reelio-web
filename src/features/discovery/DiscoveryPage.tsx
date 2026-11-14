@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  extractSourceVideo,
+  admitSourceExtractionJob,
   getExtractionFailure,
+  getSourceExtractionJob,
   type ExtractionFailure,
 } from './api/extractions'
 import { ResultBrowser } from './components/ResultBrowser'
@@ -18,10 +19,37 @@ import './DiscoveryPage.css'
 
 type DiscoveryState =
   | { status: 'idle' }
-  | { status: 'loading'; submittedUrl: string; requestId: number }
+  | { status: 'admitting'; submittedUrl: string; requestId: number }
+  | { status: 'queued'; submittedUrl: string; requestId: number; jobId: string }
+  | { status: 'running'; submittedUrl: string; requestId: number; jobId: string }
   | { status: 'success'; data: DiscoveryData; selectedCategory: MediaCategory }
   | { status: 'empty'; data: DiscoveryData }
   | { status: 'failure'; submittedUrl: string; failure: ExtractionFailure }
+
+const waitForPollingDelay = ({
+  delayMilliseconds,
+  signal,
+}: {
+  readonly delayMilliseconds: number
+  readonly signal: AbortSignal
+}): Promise<void> => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>()
+  const handleAbort = () => {
+    clearTimeout(timeoutId)
+    reject(signal.reason)
+  }
+  const timeoutId = setTimeout(() => {
+    signal.removeEventListener('abort', handleAbort)
+    resolve()
+  }, delayMilliseconds)
+
+  signal.addEventListener('abort', handleAbort, { once: true })
+  if (signal.aborted) {
+    handleAbort()
+  }
+
+  return promise
+}
 
 type SourceVideoSummaryCardProps = {
   sourceVideo: SourceVideoSummary
@@ -61,7 +89,9 @@ const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryC
           </a>
         </h2>
         <p className="source-video-summary_metadata">
-          {sourceVideo.platformLabel}
+          {sourceVideo.channel === undefined
+            ? sourceVideo.platformLabel
+            : `by ${sourceVideo.channel} · ${sourceVideo.platformLabel}`}
         </p>
       </div>
       <button
@@ -96,14 +126,17 @@ export const DiscoveryPage = () => {
   const activeRequestRef = useRef<{ requestId: number; controller: AbortController } | undefined>(
     undefined,
   )
-  const isLoading = discoveryState.status === 'loading'
+  const isPending =
+    discoveryState.status === 'admitting' ||
+    discoveryState.status === 'queued' ||
+    discoveryState.status === 'running'
 
   const handleUrlChange = (value: string) => {
     setUrlValue(value)
     setGuidance(undefined)
   }
 
-  const runExtraction = useCallback(async (submittedUrl: string): Promise<void> => {
+  const runSourceExtractionJob = useCallback(async (submittedUrl: string): Promise<void> => {
     if (isPendingRef.current) {
       return
     }
@@ -113,20 +146,52 @@ export const DiscoveryPage = () => {
     requestIdRef.current = requestId
     const controller = new AbortController()
     activeRequestRef.current = { requestId, controller }
-    setDiscoveryState({ status: 'loading', submittedUrl, requestId })
+    setDiscoveryState({ status: 'admitting', submittedUrl, requestId })
 
     try {
-      const data = await extractSourceVideo({ url: submittedUrl, signal: controller.signal })
+      const admittedJob = await admitSourceExtractionJob({ url: submittedUrl, signal: controller.signal })
       if (activeRequestRef.current?.requestId !== requestId) {
         return
       }
 
-      const selectedCategory = getFirstNonEmptyMediaCategory(data.categorizedResults)
-      setDiscoveryState(
-        selectedCategory === undefined
-          ? { status: 'empty', data }
-          : { status: 'success', data, selectedCategory },
-      )
+      setDiscoveryState({
+        status: 'queued',
+        submittedUrl,
+        requestId,
+        jobId: admittedJob.jobId,
+      })
+      await waitForPollingDelay({
+        delayMilliseconds: admittedJob.retryAfterMilliseconds,
+        signal: controller.signal,
+      })
+
+      while (activeRequestRef.current?.requestId === requestId) {
+        const job = await getSourceExtractionJob({ jobId: admittedJob.jobId, signal: controller.signal })
+        if (activeRequestRef.current?.requestId !== requestId) {
+          return
+        }
+
+        if (job.status === 'succeeded') {
+          const selectedCategory = getFirstNonEmptyMediaCategory(job.data.categorizedResults)
+          setDiscoveryState(
+            selectedCategory === undefined
+              ? { status: 'empty', data: job.data }
+              : { status: 'success', data: job.data, selectedCategory },
+          )
+          return
+        }
+
+        setDiscoveryState({
+          status: job.status,
+          submittedUrl,
+          requestId,
+          jobId: job.jobId,
+        })
+        await waitForPollingDelay({
+          delayMilliseconds: job.retryAfterMilliseconds,
+          signal: controller.signal,
+        })
+      }
     } catch (error) {
       if (controller.signal.aborted || activeRequestRef.current?.requestId !== requestId) {
         return
@@ -160,7 +225,7 @@ export const DiscoveryPage = () => {
     }
 
     setGuidance(undefined)
-    void runExtraction(validation.url)
+    void runSourceExtractionJob(validation.url)
   }
 
   const handleRetry = () => {
@@ -169,7 +234,7 @@ export const DiscoveryPage = () => {
     }
 
     setUrlValue(discoveryState.submittedUrl)
-    void runExtraction(discoveryState.submittedUrl)
+    void runSourceExtractionJob(discoveryState.submittedUrl)
   }
 
   useEffect(
@@ -202,6 +267,15 @@ export const DiscoveryPage = () => {
 
   const guidanceId = guidance === undefined ? undefined : 'video-url-guidance'
 
+  const pendingStatusMessage =
+    discoveryState.status === 'admitting'
+      ? 'Submitting your video'
+      : discoveryState.status === 'queued'
+        ? 'Waiting to start'
+        : discoveryState.status === 'running'
+          ? 'Finding what’s mentioned'
+          : undefined
+
   return (
     <div className="discovery-page">
       <header className="site-header">
@@ -233,7 +307,7 @@ export const DiscoveryPage = () => {
                   placeholder="https://www.tiktok.com/@creator/video/123…"
                   value={urlValue}
                   onChange={(event) => handleUrlChange(event.target.value)}
-                  disabled={isLoading}
+                  disabled={isPending}
                   aria-describedby={
                     guidanceId === undefined
                       ? 'source-video-url-support'
@@ -245,7 +319,7 @@ export const DiscoveryPage = () => {
                   Paste a public YouTube, Instagram, Facebook, TikTok, or X video link.
                 </p>
               </div>
-              <button className="discover-button" type="submit" disabled={isLoading}>
+              <button className="discover-button" type="submit" disabled={isPending}>
                 Discover
               </button>
             </form>
@@ -258,16 +332,16 @@ export const DiscoveryPage = () => {
         </section>
 
         <section className="page-wrap discovery-result" aria-label="Discovery result" aria-live="polite">
-          {discoveryState.status === 'loading' ? (
+          {pendingStatusMessage === undefined ? null : (
             <p className="discovery-result_status" role="status">
-              Finding what’s mentioned
+              {pendingStatusMessage}
               <span className="loading-dots" aria-hidden="true">
                 <span>.</span>
                 <span>.</span>
                 <span>.</span>
               </span>
             </p>
-          ) : null}
+          )}
           {discoveryState.status === 'success' || discoveryState.status === 'empty' ? (
             <>
               <SourceVideoSummaryCard

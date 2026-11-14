@@ -41,6 +41,29 @@ export type ExtractionFailure = {
   readonly canRetry: boolean
 }
 
+export type AcceptedSourceExtractionJob = {
+  readonly status: 'queued'
+  readonly jobId: string
+  readonly retryAfterMilliseconds: number
+}
+
+export type SourceExtractionJobStatus =
+  | {
+      readonly status: 'queued'
+      readonly jobId: string
+      readonly retryAfterMilliseconds: number
+    }
+  | {
+      readonly status: 'running'
+      readonly jobId: string
+      readonly retryAfterMilliseconds: number
+    }
+  | {
+      readonly status: 'succeeded'
+      readonly jobId: string
+      readonly data: DiscoveryData
+    }
+
 type BackendPlatform = 'youtube' | 'instagram' | 'facebook' | 'tiktok' | 'x'
 type BackendTranscriptMethod = 'youtube_captions' | 'whisper' | 'text_submission'
 type BackendResultStatus = 'resolved' | 'unresolved'
@@ -1117,25 +1140,104 @@ const readJsonPayload = async ({
 export const getExtractionFailure = (error: unknown): ExtractionFailure =>
   error instanceof ExtractionRequestError ? error.failure : UNEXPECTED_RESPONSE_FAILURE
 
-export const extractSourceVideo = async ({
-  url,
+const CANONICAL_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const MINIMUM_RETRY_AFTER_MILLISECONDS = 250
+const MAXIMUM_RETRY_AFTER_MILLISECONDS = 30_000
+const FALLBACK_RETRY_AFTER_MILLISECONDS = 1_000
+
+const requireCanonicalUuidV4 = (value: unknown): string => {
+  const jobId = requireString(value)
+  if (!CANONICAL_UUID_V4.test(jobId)) {
+    malformedResponse()
+  }
+
+  return jobId
+}
+
+const getRetryAfterMilliseconds = (response: Response): number => {
+  const retryAfter = response.headers.get('Retry-After')?.trim()
+  if (retryAfter === undefined || !/^\d+$/.test(retryAfter)) {
+    return FALLBACK_RETRY_AFTER_MILLISECONDS
+  }
+
+  const retryAfterSeconds = Number(retryAfter)
+  if (!Number.isSafeInteger(retryAfterSeconds)) {
+    return FALLBACK_RETRY_AFTER_MILLISECONDS
+  }
+
+  if (retryAfterSeconds >= MAXIMUM_RETRY_AFTER_MILLISECONDS / 1_000) {
+    return MAXIMUM_RETRY_AFTER_MILLISECONDS
+  }
+
+  return Math.max(MINIMUM_RETRY_AFTER_MILLISECONDS, retryAfterSeconds * 1_000)
+}
+
+const parseAcceptedSourceExtractionJob = ({
+  value,
+  response,
+}: {
+  readonly value: unknown
+  readonly response: Response
+}): AcceptedSourceExtractionJob => {
+  const job = requireRecord(value)
+  const jobId = requireCanonicalUuidV4(requireField(job, 'job_id'))
+  if (requireString(requireField(job, 'status')) !== 'queued') {
+    malformedResponse()
+  }
+
+  return {
+    status: 'queued',
+    jobId,
+    retryAfterMilliseconds: getRetryAfterMilliseconds(response),
+  }
+}
+
+const parseSourceExtractionJobStatus = ({
+  value,
+  expectedJobId,
+  response,
+}: {
+  readonly value: unknown
+  readonly expectedJobId: string
+  readonly response: Response
+}): SourceExtractionJobStatus => {
+  const job = requireRecord(value)
+  const jobId = requireCanonicalUuidV4(requireField(job, 'job_id'))
+  if (jobId !== expectedJobId) {
+    malformedResponse()
+  }
+
+  const status = requireString(requireField(job, 'status'))
+  if (status === 'queued' || status === 'running') {
+    return {
+      status,
+      jobId,
+      retryAfterMilliseconds: getRetryAfterMilliseconds(response),
+    }
+  }
+
+  if (status !== 'succeeded') {
+    malformedResponse()
+  }
+
+  return {
+    status: 'succeeded',
+    jobId,
+    data: parseExtractionResponse(requireField(job, 'result')),
+  }
+}
+
+const requestExtractionEndpoint = async ({
+  endpoint,
+  init,
   signal,
 }: {
-  readonly url: string
+  readonly endpoint: string
+  readonly init: RequestInit
   readonly signal: AbortSignal
-}): Promise<DiscoveryData> => {
-
-  let response: Response
-
+}): Promise<Response> => {
   try {
-    response = await fetch('/api/extractions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ url }),
-      signal,
-    })
+    return await fetch(endpoint, { ...init, signal })
   } catch (error) {
     if (signal.aborted) {
       throw error
@@ -1143,15 +1245,79 @@ export const extractSourceVideo = async ({
 
     throw new ExtractionRequestError(NETWORK_FAILURE)
   }
+}
 
-  const payload = await readJsonPayload({ response, signal })
+const ensureExpectedResponseStatus = ({
+  response,
+  payload,
+  expectedStatus,
+}: {
+  readonly response: Response
+  readonly payload: unknown
+  readonly expectedStatus: number
+}): void => {
+  if (response.status === expectedStatus) {
+    return
+  }
 
   if (!response.ok) {
     throw new ExtractionRequestError(getFailureFromErrorPayload(payload))
   }
 
+  throw new ExtractionRequestError(UNEXPECTED_RESPONSE_FAILURE)
+}
+
+export const admitSourceExtractionJob = async ({
+  url,
+  signal,
+}: {
+  readonly url: string
+  readonly signal: AbortSignal
+}): Promise<AcceptedSourceExtractionJob> => {
+  const response = await requestExtractionEndpoint({
+    endpoint: '/api/extraction-jobs',
+    init: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ url }),
+    },
+    signal,
+  })
+  const payload = await readJsonPayload({ response, signal })
+  ensureExpectedResponseStatus({ response, payload, expectedStatus: 202 })
+
   try {
-    return parseExtractionResponse(payload)
+    return parseAcceptedSourceExtractionJob({ value: payload, response })
+  } catch (error) {
+    if (signal.aborted) {
+      throw error
+    }
+
+    throw new ExtractionRequestError(UNEXPECTED_RESPONSE_FAILURE)
+  }
+}
+
+export const getSourceExtractionJob = async ({
+  jobId,
+  signal,
+}: {
+  readonly jobId: string
+  readonly signal: AbortSignal
+}): Promise<SourceExtractionJobStatus> => {
+  const response = await requestExtractionEndpoint({
+    endpoint: `/api/extraction-jobs/${jobId}`,
+    init: {
+      method: 'GET',
+    },
+    signal,
+  })
+  const payload = await readJsonPayload({ response, signal })
+  ensureExpectedResponseStatus({ response, payload, expectedStatus: 200 })
+
+  try {
+    return parseSourceExtractionJobStatus({ value: payload, expectedJobId: jobId, response })
   } catch (error) {
     if (signal.aborted) {
       throw error

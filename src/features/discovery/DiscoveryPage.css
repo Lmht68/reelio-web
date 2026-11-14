@@ -669,6 +669,17 @@
   line-height: 1.4;
 }
 
+.result-card_unknown-description {
+  display: -webkit-box;
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .result-card_score {
   display: inline-flex;
   align-items: center;

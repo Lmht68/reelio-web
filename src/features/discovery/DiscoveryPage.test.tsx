@@ -3,7 +3,12 @@ import userEvent, { type UserEvent } from '@testing-library/user-event'
 import { HttpResponse, http } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { DiscoveryPage } from './DiscoveryPage'
+
+declare const setImmediate: (callback: () => void) => unknown
+const scheduleMswTask = setImmediate
+
 
 const PORTRAIT_ARTWORK =
   'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%224%22 height=%226%22%3E%3Crect width=%224%22 height=%226%22 fill=%22%23c2410c%22/%3E%3C/svg%3E'
@@ -443,15 +448,49 @@ const DOMAIN_FAILURE_CASES = [
   },
 ] as const
 
-const extractionRequests: Array<{ body: unknown; contentType: string | null }> = []
+const SOURCE_EXTRACTION_JOB_ID = '00000000-0000-4000-8000-000000000001'
+
+const extractionJobSubmissions: Array<{ body: unknown; contentType: string | null }> = []
+const extractionJobPolls: Array<{ jobId: string }> = []
+
+const acceptedSourceExtractionJob = ({
+  jobId = SOURCE_EXTRACTION_JOB_ID,
+  retryAfterSeconds = '0',
+}: {
+  readonly jobId?: string
+  readonly retryAfterSeconds?: string
+} = {}) =>
+  HttpResponse.json(
+    { job_id: jobId, status: 'queued' },
+    { status: 202, headers: { 'Retry-After': retryAfterSeconds } },
+  )
+
+const succeededSourceExtractionJob = ({ jobId, result }: { jobId: string; result: unknown }) =>
+  HttpResponse.json({ job_id: jobId, status: 'succeeded', result })
+
+const sourceExtractionJobStatusHandler = (response: (jobId: string) => Response) =>
+  http.get('/api/extraction-jobs/:jobId', ({ params }) => {
+    const jobId = params.jobId
+    if (typeof jobId !== 'string') {
+      return HttpResponse.json({ error: 'Missing extraction job identifier.' }, { status: 500 })
+    }
+
+    extractionJobPolls.push({ jobId })
+    return response(jobId)
+  })
+
+const succeededSourceExtractionJobStatus = (result: unknown) =>
+  sourceExtractionJobStatusHandler((jobId) => succeededSourceExtractionJob({ jobId, result }))
+
 const server = setupServer(
-  http.post('/api/extractions', async ({ request }) => {
-    extractionRequests.push({
+  http.post('/api/extraction-jobs', async ({ request }) => {
+    extractionJobSubmissions.push({
       body: await request.json(),
       contentType: request.headers.get('content-type'),
     })
-    return HttpResponse.json(EXTRACTION_FIXTURE)
+    return acceptedSourceExtractionJob()
   }),
+  succeededSourceExtractionJobStatus(EXTRACTION_FIXTURE),
 )
 
 const originalScrollYDescriptor = Object.getOwnPropertyDescriptor(window, 'scrollY')
@@ -475,9 +514,21 @@ const openTranscript = async (user: UserEvent) => {
   return screen.getByRole('dialog', { name: 'Transcript' })
 }
 
-const submitSourceVideo = async (user: UserEvent) => {
+const submitSourceVideo = async (user: UserEvent, waitForCompletion = true) => {
   await user.type(screen.getByLabelText('Video URL'), 'https://www.youtube.com/watch?v=dQw4w9WgXcQ')
   await user.click(screen.getByRole('button', { name: 'Discover' }))
+
+  if (waitForCompletion) {
+    await waitFor(() => {
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+  }
+}
+
+const flushMswRequest = async (): Promise<void> => {
+  await new Promise<void>((resolve) => scheduleMswTask(resolve))
+  await new Promise<void>((resolve) => scheduleMswTask(resolve))
+  await vi.advanceTimersByTimeAsync(0)
 }
 
 
@@ -494,7 +545,8 @@ beforeAll(() => {
 })
 
 afterEach(() => {
-  extractionRequests.length = 0
+  extractionJobSubmissions.length = 0
+  extractionJobPolls.length = 0
   server.resetHandlers()
   document.body.style.cssText = ''
   if (originalScrollYDescriptor === undefined) {
@@ -539,7 +591,7 @@ describe('DiscoveryPage', () => {
     await user.click(screen.getByRole('button', { name: 'Discover' }))
 
     await waitFor(() => {
-      expect(extractionRequests).toEqual([
+      expect(extractionJobSubmissions).toEqual([
         {
           body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
           contentType: 'application/json',
@@ -566,13 +618,13 @@ describe('DiscoveryPage', () => {
     const user = userEvent.setup()
 
     server.use(
-      http.post('/api/extractions', async ({ request }) => {
-        extractionRequests.push({
+      http.post('/api/extraction-jobs', async ({ request }) => {
+        extractionJobSubmissions.push({
           body: await request.json(),
           contentType: request.headers.get('content-type'),
         })
         await responseGate
-        return HttpResponse.json(EXTRACTION_FIXTURE)
+        return acceptedSourceExtractionJob()
       }),
     )
 
@@ -581,21 +633,209 @@ describe('DiscoveryPage', () => {
     await user.click(screen.getByRole('button', { name: 'Discover' }))
 
     const resultRegion = screen.getByRole('region', { name: 'Discovery result' })
-    expect(await screen.findByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    expect(await screen.findByRole('status')).toHaveTextContent('Submitting your video')
     expect(resultRegion).not.toHaveAttribute('aria-busy')
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Video URL')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Discover' })).toBeDisabled()
 
     await waitFor(() => {
-      expect(extractionRequests).toHaveLength(1)
+      expect(extractionJobSubmissions).toHaveLength(1)
     })
     await user.click(screen.getByRole('button', { name: 'Discover' }))
-    expect(extractionRequests).toHaveLength(1)
+    expect(extractionJobSubmissions).toHaveLength(1)
 
     releaseResponse()
 
     expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+  })
+
+  it('should admit once and poll queued, running, then succeeded jobs in Retry-After order', async () => {
+    const { promise: admissionGate, resolve: releaseAdmission } = Promise.withResolvers<void>()
+    vi.useFakeTimers()
+
+    try {
+      let statusReadNumber = 0
+      server.use(
+        http.post('/api/extraction-jobs', async ({ request }) => {
+          extractionJobSubmissions.push({
+            body: await request.json(),
+            contentType: request.headers.get('content-type'),
+          })
+          await admissionGate
+          return acceptedSourceExtractionJob({ retryAfterSeconds: '2' })
+        }),
+        sourceExtractionJobStatusHandler((jobId) => {
+          statusReadNumber += 1
+          if (statusReadNumber === 1) {
+            return HttpResponse.json(
+              { job_id: jobId, status: 'queued' },
+              { headers: { 'Retry-After': '3' } },
+            )
+          }
+          if (statusReadNumber === 2) {
+            return HttpResponse.json(
+              { job_id: jobId, status: 'running' },
+              { headers: { 'Retry-After': '1' } },
+            )
+          }
+
+          return succeededSourceExtractionJob({ jobId, result: EXTRACTION_FIXTURE })
+        }),
+      )
+
+      render(<DiscoveryPage />)
+      const input = screen.getByLabelText('Video URL')
+      const form = input.closest('form')
+      if (form === null) {
+        throw new Error('Discovery form is missing.')
+      }
+
+      fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
+      fireEvent.submit(form)
+      await act(async () => {
+        await flushMswRequest()
+      })
+
+      expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
+      expect(extractionJobSubmissions).toHaveLength(1)
+      expect(extractionJobPolls).toHaveLength(0)
+      expect(screen.getByLabelText('Video URL')).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Discover' })).toBeDisabled()
+
+      releaseAdmission()
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByRole('status')).toHaveTextContent('Waiting to start')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_999)
+      })
+      expect(extractionJobPolls).toHaveLength(0)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(1)
+      expect(screen.getByRole('status')).toHaveTextContent('Waiting to start')
+
+      await act(async () => {
+        vi.advanceTimersByTime(3_000)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(2)
+      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+      expect(screen.getByLabelText('Video URL')).toBeDisabled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(1_000)
+        await flushMswRequest()
+      })
+      expect(extractionJobSubmissions).toHaveLength(1)
+      expect(extractionJobPolls).toEqual([
+        { jobId: SOURCE_EXTRACTION_JOB_ID },
+        { jobId: SOURCE_EXTRACTION_JOB_ID },
+        { jobId: SOURCE_EXTRACTION_JOB_ID },
+      ])
+      expect(screen.getByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('should clamp polling Retry-After values and fall back for malformed or missing headers', async () => {
+    vi.useFakeTimers()
+
+    try {
+      let statusReadNumber = 0
+      server.use(
+        http.post('/api/extraction-jobs', () =>
+          acceptedSourceExtractionJob({ retryAfterSeconds: '0' }),
+        ),
+        sourceExtractionJobStatusHandler((jobId) => {
+          statusReadNumber += 1
+          if (statusReadNumber === 1) {
+            return HttpResponse.json(
+              { job_id: jobId, status: 'queued' },
+              { headers: { 'Retry-After': '999' } },
+            )
+          }
+          if (statusReadNumber === 2) {
+            return HttpResponse.json(
+              { job_id: jobId, status: 'running' },
+              { headers: { 'Retry-After': 'invalid' } },
+            )
+          }
+          if (statusReadNumber === 3) {
+            return HttpResponse.json({ job_id: jobId, status: 'running' })
+          }
+
+          return succeededSourceExtractionJob({ jobId, result: EXTRACTION_FIXTURE })
+        }),
+      )
+
+      render(<DiscoveryPage />)
+      const input = screen.getByLabelText('Video URL')
+      const form = input.closest('form')
+      if (form === null) {
+        throw new Error('Discovery form is missing.')
+      }
+
+      fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
+      fireEvent.submit(form)
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByRole('status')).toHaveTextContent('Waiting to start')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(249)
+      })
+      expect(extractionJobPolls).toHaveLength(0)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(1)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(29_999)
+      })
+      expect(extractionJobPolls).toHaveLength(1)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(2)
+      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(999)
+      })
+      expect(extractionJobPolls).toHaveLength(2)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(3)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(999)
+      })
+      expect(extractionJobPolls).toHaveLength(3)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+        await flushMswRequest()
+      })
+      expect(extractionJobPolls).toHaveLength(4)
+      expect(screen.getByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('should show malformed URL guidance when the submitted URL cannot be parsed', async () => {
@@ -646,7 +886,7 @@ describe('DiscoveryPage', () => {
     await user.keyboard('{Enter}')
 
     await waitFor(() => {
-      expect(extractionRequests).toEqual([
+      expect(extractionJobSubmissions).toEqual([
         {
           body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
           contentType: 'application/json',
@@ -687,15 +927,13 @@ describe('DiscoveryPage', () => {
     const user = userEvent.setup()
 
     server.use(
-      http.post('/api/extractions', () =>
-        HttpResponse.json({
-          ...EXTRACTION_FIXTURE,
-          source: {
-            ...EXTRACTION_FIXTURE.source,
-            title: '   ',
-          },
-        }),
-      ),
+      succeededSourceExtractionJobStatus({
+        ...EXTRACTION_FIXTURE,
+        source: {
+          ...EXTRACTION_FIXTURE.source,
+          title: '   ',
+        },
+      }),
     )
 
     render(<DiscoveryPage />)
@@ -806,7 +1044,7 @@ describe('DiscoveryPage', () => {
   it('should keep resolved results categorized when optional provider metadata is absent', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.json(OPTIONAL_METADATA_FIXTURE)))
+    server.use(succeededSourceExtractionJobStatus(OPTIONAL_METADATA_FIXTURE))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1045,7 +1283,7 @@ describe('DiscoveryPage', () => {
   it('should omit empty optional rows and links when provider metadata is unavailable', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.json(OPTIONAL_METADATA_FIXTURE)))
+    server.use(succeededSourceExtractionJobStatus(OPTIONAL_METADATA_FIXTURE))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1177,7 +1415,7 @@ describe('DiscoveryPage', () => {
   it('should skip disabled tabs and wrap keyboard navigation when only Movies and Unknown have results', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.json(MEDIA_AND_UNKNOWN_FIXTURE)))
+    server.use(succeededSourceExtractionJobStatus(MEDIA_AND_UNKNOWN_FIXTURE))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1214,9 +1452,12 @@ describe('DiscoveryPage', () => {
     let responseNumber = 0
 
     server.use(
-      http.post('/api/extractions', () => {
+      sourceExtractionJobStatusHandler((jobId) => {
         responseNumber += 1
-        return HttpResponse.json(responseNumber === 1 ? EXTRACTION_FIXTURE : MUSIC_ONLY_FIXTURE)
+        return succeededSourceExtractionJob({
+          jobId,
+          result: responseNumber === 1 ? EXTRACTION_FIXTURE : MUSIC_ONLY_FIXTURE,
+        })
       }),
     )
 
@@ -1235,7 +1476,7 @@ describe('DiscoveryPage', () => {
   it('should render directional empty copy without alerts or retry when a successful extraction has no results', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.json(EMPTY_EXTRACTION_FIXTURE)))
+    server.use(succeededSourceExtractionJobStatus(EMPTY_EXTRACTION_FIXTURE))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1259,7 +1500,7 @@ describe('DiscoveryPage', () => {
       const user = userEvent.setup()
 
       server.use(
-        http.post('/api/extractions', () =>
+        http.post('/api/extraction-jobs', () =>
           HttpResponse.json(
             { error: { code, message: 'Backend details must stay hidden' } },
             { status: 503 },
@@ -1286,7 +1527,7 @@ describe('DiscoveryPage', () => {
     const user = userEvent.setup()
 
     server.use(
-      http.post('/api/extractions', () =>
+      http.post('/api/extraction-jobs', () =>
         HttpResponse.json({ detail: [{ msg: 'The backend details must stay hidden' }] }, { status: 422 }),
       ),
     )
@@ -1306,7 +1547,7 @@ describe('DiscoveryPage', () => {
     const user = userEvent.setup()
 
     server.use(
-      http.post('/api/extractions', () => new HttpResponse('Service temporarily unavailable', { status: 503 })),
+      http.post('/api/extraction-jobs', () => new HttpResponse('Service temporarily unavailable', { status: 503 })),
     )
 
     render(<DiscoveryPage />)
@@ -1318,10 +1559,45 @@ describe('DiscoveryPage', () => {
     expect(within(alert).getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
-  it('should render unexpected-response recovery when a successful response lacks required extraction fields', async () => {
+  it('should render unexpected-response recovery when admission payload is malformed', async () => {
+    const user = userEvent.setup()
+    server.use(
+      http.post('/api/extraction-jobs', () =>
+        HttpResponse.json(
+          { job_id: 'not-a-canonical-uuid', status: 'queued' },
+          { status: 202, headers: { 'Retry-After': '0' } },
+        ),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We received an unexpected response' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Source video' })).not.toBeInTheDocument()
+  })
+
+  it('should render unexpected-response recovery when a job status payload is malformed', async () => {
+    const user = userEvent.setup()
+    server.use(
+      sourceExtractionJobStatusHandler((jobId) =>
+        HttpResponse.json({ job_id: jobId, status: 'failed' }),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(within(alert).getByRole('heading', { name: 'We received an unexpected response' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Source video' })).not.toBeInTheDocument()
+  })
+
+  it('should render unexpected-response recovery when a succeeded job embeds a malformed extraction result', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.json({ source: { platform: 'youtube' } })))
+    server.use(succeededSourceExtractionJobStatus({ source: { platform: 'youtube' } }))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1336,7 +1612,7 @@ describe('DiscoveryPage', () => {
   it('should render network recovery when the extraction request rejects', async () => {
     const user = userEvent.setup()
 
-    server.use(http.post('/api/extractions', () => HttpResponse.error()))
+    server.use(http.post('/api/extraction-jobs', () => HttpResponse.error()))
 
     render(<DiscoveryPage />)
     await submitSourceVideo(user)
@@ -1353,8 +1629,8 @@ describe('DiscoveryPage', () => {
     let attempt = 0
 
     server.use(
-      http.post('/api/extractions', async ({ request }) => {
-        extractionRequests.push({
+      http.post('/api/extraction-jobs', async ({ request }) => {
+        extractionJobSubmissions.push({
           body: await request.json(),
           contentType: request.headers.get('content-type'),
         })
@@ -1367,7 +1643,7 @@ describe('DiscoveryPage', () => {
         }
 
         await retryResponseGate
-        return HttpResponse.json(EXTRACTION_FIXTURE)
+        return acceptedSourceExtractionJob()
       }),
     )
 
@@ -1380,10 +1656,10 @@ describe('DiscoveryPage', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Try again' }))
 
-    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
     releaseRetryResponse()
     expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
-    expect(extractionRequests.map(({ body }) => body)).toEqual([
+    expect(extractionJobSubmissions.map(({ body }) => body)).toEqual([
       { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
       { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
     ])
@@ -1395,7 +1671,7 @@ describe('DiscoveryPage', () => {
     let attempt = 0
 
     server.use(
-      http.post('/api/extractions', async () => {
+      http.post('/api/extraction-jobs', async () => {
         attempt += 1
         if (attempt === 1) {
           return HttpResponse.json(
@@ -1418,7 +1694,7 @@ describe('DiscoveryPage', () => {
     expect(await screen.findByRole('heading', { name: 'Transcription is temporarily unavailable' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Try again' }))
 
-    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
     releaseRetryResponse()
     expect(await screen.findByRole('heading', { name: 'Processing took too long' })).toBeInTheDocument()
     expect(screen.getByLabelText('Video URL')).toHaveValue(
@@ -1433,13 +1709,13 @@ describe('DiscoveryPage', () => {
     const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
 
     server.use(
-      http.post('/api/extractions', async ({ request }) => {
-        extractionRequests.push({
+      http.post('/api/extraction-jobs', async ({ request }) => {
+        extractionJobSubmissions.push({
           body: await request.json(),
           contentType: request.headers.get('content-type'),
         })
         await responseGate
-        return HttpResponse.json(EXTRACTION_FIXTURE)
+        return acceptedSourceExtractionJob()
       }),
     )
 
@@ -1454,31 +1730,22 @@ describe('DiscoveryPage', () => {
     fireEvent.submit(form)
     fireEvent.submit(form)
 
-    expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+    expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
     await waitFor(() => {
-      expect(extractionRequests).toHaveLength(1)
+      expect(extractionJobSubmissions).toHaveLength(1)
     })
 
     releaseResponse()
     expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
   })
 
-  it('should keep loading without a client timeout when extraction remains pending for 30 minutes', async () => {
-    const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
+  it('should keep submitting without a client timeout while admission remains pending for 30 minutes', async () => {
+    const { promise: admissionResponse } = Promise.withResolvers<Response>()
+    const fetchMock = vi.fn(() => admissionResponse)
+    vi.stubGlobal('fetch', fetchMock)
     vi.useFakeTimers()
 
     try {
-      server.use(
-        http.post('/api/extractions', async ({ request }) => {
-          extractionRequests.push({
-            body: await request.json(),
-            contentType: request.headers.get('content-type'),
-          })
-          await responseGate
-          return HttpResponse.json(EXTRACTION_FIXTURE)
-        }),
-      )
-
       render(<DiscoveryPage />)
       const input = screen.getByLabelText('Video URL')
       const form = input.closest('form')
@@ -1489,51 +1756,72 @@ describe('DiscoveryPage', () => {
       fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
       fireEvent.submit(form)
 
-      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
+      expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(30 * 60 * 1000)
+        vi.advanceTimersByTime(30 * 60 * 1000)
       })
-      expect(extractionRequests).toHaveLength(1)
-      expect(screen.getByRole('status')).toHaveTextContent('Finding what’s mentioned')
-
-      releaseResponse()
+      expect(screen.getByRole('status')).toHaveTextContent('Submitting your video')
+      expect(fetchMock).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
-
-    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
   })
 
-  it('should abort the active request without an alert when the page unmounts', async () => {
-    const { promise: responseGate, resolve: releaseResponse } = Promise.withResolvers<void>()
-    let requestSignal: AbortSignal | undefined
-    const user = userEvent.setup()
+  it('should stop local polling on unmount without cancelling the admitted server job', async () => {
+    vi.useFakeTimers()
 
-    server.use(
-      http.post('/api/extractions', async ({ request }) => {
-        requestSignal = request.signal
-        await responseGate
-        return HttpResponse.json(EXTRACTION_FIXTURE)
-      }),
-    )
+    try {
+      let cancellationRequests = 0
+      server.use(
+        http.post('/api/extraction-jobs', async ({ request }) => {
+          extractionJobSubmissions.push({
+            body: await request.json(),
+            contentType: request.headers.get('content-type'),
+          })
+          return acceptedSourceExtractionJob({ retryAfterSeconds: '30' })
+        }),
+        http.delete('/api/extraction-jobs/:jobId', () => {
+          cancellationRequests += 1
+          return new HttpResponse(null, { status: 204 })
+        }),
+      )
 
-    const { unmount } = render(<DiscoveryPage />)
-    await submitSourceVideo(user)
+      const { unmount } = render(<DiscoveryPage />)
+      const input = screen.getByLabelText('Video URL')
+      const form = input.closest('form')
+      if (form === null) {
+        throw new Error('Discovery form is missing.')
+      }
 
-    await waitFor(() => {
-      expect(requestSignal).toBeDefined()
-    })
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    unmount()
+      fireEvent.change(input, { target: { value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' } })
+      fireEvent.submit(form)
+      await act(async () => {
+        await flushMswRequest()
+      })
 
-    expect(requestSignal?.aborted).toBe(true)
-    releaseResponse()
+      expect(screen.getByRole('status')).toHaveTextContent('Waiting to start')
+      expect(extractionJobPolls).toHaveLength(0)
+      unmount()
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000)
+      })
+
+      expect(extractionJobSubmissions).toHaveLength(1)
+      expect(extractionJobPolls).toHaveLength(0)
+      expect(cancellationRequests).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
-  it('should preserve the newest result when an obsolete keyed page request finishes last', async () => {
+  it('should preserve the newest result when an obsolete admission finishes last', async () => {
     const { promise: firstResponseGate, resolve: releaseFirstResponse } = Promise.withResolvers<void>()
     const { promise: secondResponseGate, resolve: releaseSecondResponse } = Promise.withResolvers<void>()
     const user = userEvent.setup()
+    const firstJobId = '00000000-0000-4000-8000-000000000001'
+    const secondJobId = '00000000-0000-4000-8000-000000000002'
     let requestCount = 0
     const olderFixture = {
       ...EXTRACTION_FIXTURE,
@@ -1545,26 +1833,32 @@ describe('DiscoveryPage', () => {
     }
 
     server.use(
-      http.post('/api/extractions', async () => {
+      http.post('/api/extraction-jobs', async () => {
         requestCount += 1
         if (requestCount === 1) {
           await firstResponseGate
-          return HttpResponse.json(olderFixture)
+          return acceptedSourceExtractionJob({ jobId: firstJobId })
         }
 
         await secondResponseGate
-        return HttpResponse.json(newerFixture)
+        return acceptedSourceExtractionJob({ jobId: secondJobId })
       }),
+      sourceExtractionJobStatusHandler((jobId) =>
+        succeededSourceExtractionJob({
+          jobId,
+          result: jobId === secondJobId ? newerFixture : olderFixture,
+        }),
+      ),
     )
 
     const page = render(<DiscoveryPage key="initial" />)
-    await submitSourceVideo(user)
+    await submitSourceVideo(user, false)
     await waitFor(() => {
       expect(requestCount).toBe(1)
     })
 
     page.rerender(<DiscoveryPage key="replacement" />)
-    await submitSourceVideo(user)
+    await submitSourceVideo(user, false)
     await waitFor(() => {
       expect(requestCount).toBe(2)
     })
@@ -1739,12 +2033,10 @@ describe('DiscoveryPage', () => {
   it('should disable transcript search and describe the source when transcript text is blank', async () => {
     const user = userEvent.setup()
     server.use(
-      http.post('/api/extractions', () =>
-        HttpResponse.json({
-          ...EXTRACTION_FIXTURE,
-          transcript: { ...EXTRACTION_FIXTURE.transcript, text: '   ' },
-        }),
-      ),
+      succeededSourceExtractionJobStatus({
+        ...EXTRACTION_FIXTURE,
+        transcript: { ...EXTRACTION_FIXTURE.transcript, text: '   ' },
+      }),
     )
 
     render(<DiscoveryPage />)
