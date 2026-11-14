@@ -449,8 +449,16 @@ const DOMAIN_FAILURE_CASES = [
 ] as const
 
 const SOURCE_EXTRACTION_JOB_ID = '00000000-0000-4000-8000-000000000001'
+const LATEST_EXTRACTION_JOB_ID_KEY = 'reelio.discovery.latest-extraction-job-id'
+const PENDING_EXTRACTION_IDEMPOTENCY_KEY = 'reelio.discovery.pending-extraction-idempotency-key'
+const CANONICAL_UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
 
-const extractionJobSubmissions: Array<{ body: unknown; contentType: string | null }> = []
+
+const extractionJobSubmissions: Array<{
+  body: unknown
+  contentType: string | null
+  idempotencyKey?: string | null
+}> = []
 const extractionJobPolls: Array<{ jobId: string }> = []
 
 const acceptedSourceExtractionJob = ({
@@ -487,6 +495,7 @@ const server = setupServer(
     extractionJobSubmissions.push({
       body: await request.json(),
       contentType: request.headers.get('content-type'),
+      idempotencyKey: request.headers.get('idempotency-key'),
     })
     return acceptedSourceExtractionJob()
   }),
@@ -539,6 +548,7 @@ beforeEach(() => {
     configurable: true,
     value: scrollIntoViewMock,
   })
+  window.localStorage.clear()
 })
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' })
@@ -595,9 +605,194 @@ describe('DiscoveryPage', () => {
         {
           body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
           contentType: 'application/json',
+          idempotencyKey: expect.stringMatching(CANONICAL_UUID_V4),
         },
       ])
     })
+  })
+
+  it('should persist only the latest job identity after an accepted admission', async () => {
+    const user = userEvent.setup()
+    let idempotencyKey: string | null | undefined
+
+    server.use(
+      http.post('/api/extraction-jobs', ({ request }) => {
+        idempotencyKey = request.headers.get('idempotency-key')
+        return acceptedSourceExtractionJob({ retryAfterSeconds: '30' })
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user, false)
+
+    await waitFor(() => {
+      expect(idempotencyKey).toMatch(CANONICAL_UUID_V4)
+    })
+    expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBe(SOURCE_EXTRACTION_JOB_ID)
+    expect(window.localStorage.getItem(PENDING_EXTRACTION_IDEMPOTENCY_KEY)).toBeNull()
+    expect(Object.keys(window.localStorage)).toEqual([LATEST_EXTRACTION_JOB_ID_KEY])
+  })
+
+  it('should reuse a pending idempotency key when a failed admission is retried', async () => {
+    const user = userEvent.setup()
+    const idempotencyKeys: Array<string | null> = []
+    let attempt = 0
+
+    server.use(
+      http.post('/api/extraction-jobs', ({ request }) => {
+        attempt += 1
+        idempotencyKeys.push(request.headers.get('idempotency-key'))
+        if (attempt === 1) {
+          return HttpResponse.json(
+            { error: { code: 'transcription_unavailable', message: 'Backend details must stay hidden' } },
+            { status: 503 },
+          )
+        }
+
+        return acceptedSourceExtractionJob({ retryAfterSeconds: '30' })
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    const pendingKey = window.localStorage.getItem(PENDING_EXTRACTION_IDEMPOTENCY_KEY)
+    expect(pendingKey).toMatch(CANONICAL_UUID_V4)
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    await waitFor(() => {
+      expect(idempotencyKeys).toHaveLength(2)
+    })
+    expect(idempotencyKeys).toEqual([pendingKey, pendingKey])
+  })
+
+  it('should reuse a valid pending idempotency key from a prior admission attempt', async () => {
+    const user = userEvent.setup()
+    const pendingKey = '00000000-0000-4000-8000-000000000002'
+    let idempotencyKey: string | null | undefined
+    window.localStorage.setItem(PENDING_EXTRACTION_IDEMPOTENCY_KEY, pendingKey)
+
+    server.use(
+      http.post('/api/extraction-jobs', ({ request }) => {
+        idempotencyKey = request.headers.get('idempotency-key')
+        return acceptedSourceExtractionJob({ retryAfterSeconds: '30' })
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user, false)
+
+    await waitFor(() => {
+      expect(idempotencyKey).toBe(pendingKey)
+    })
+  })
+
+  it('should not admit a job when the browser cannot persist an idempotency key', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Web Storage is unavailable.')
+    })
+    const user = userEvent.setup()
+
+    try {
+      render(<DiscoveryPage />)
+      await submitSourceVideo(user)
+
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(screen.getByRole('alert')).toHaveTextContent('We received an unexpected response')
+    } finally {
+      setItem.mockRestore()
+    }
+  })
+
+  it('should not admit a job when the browser cannot generate an idempotency key', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('crypto', { randomUUID: undefined })
+    const user = userEvent.setup()
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('We received an unexpected response')
+  })
+
+  it('should restore a saved job by polling its status without another admission', async () => {
+    let admissions = 0
+    window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)
+
+    server.use(
+      http.post('/api/extraction-jobs', () => {
+        admissions += 1
+        return acceptedSourceExtractionJob()
+      }),
+    )
+
+    render(<DiscoveryPage />)
+
+    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    expect(admissions).toBe(0)
+    expect(extractionJobPolls).toEqual([{ jobId: SOURCE_EXTRACTION_JOB_ID }])
+    expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
+  })
+
+  it('should retry a failed status read without admitting another job', async () => {
+    const user = userEvent.setup()
+    let statusReads = 0
+
+    server.use(
+      sourceExtractionJobStatusHandler((jobId) => {
+        statusReads += 1
+        if (statusReads === 1) {
+          return HttpResponse.json(
+            { error: { code: 'transcription_unavailable', message: 'Backend details must stay hidden' } },
+            { status: 503 },
+          )
+        }
+
+        return succeededSourceExtractionJob({ jobId, result: EXTRACTION_FIXTURE })
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    expect(await screen.findByRole('heading', { name: 'Transcription is temporarily unavailable' })).toBeInTheDocument()
+    expect(extractionJobSubmissions).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(await screen.findByRole('heading', { name: 'Never Gonna Give You Up' })).toBeInTheDocument()
+    expect(extractionJobSubmissions).toHaveLength(1)
+    expect(extractionJobPolls).toHaveLength(2)
+  })
+
+  it('should clear an unavailable restored job without admitting another job', async () => {
+    let admissions = 0
+    window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)
+
+    server.use(
+      http.post('/api/extraction-jobs', () => {
+        admissions += 1
+        return acceptedSourceExtractionJob()
+      }),
+      sourceExtractionJobStatusHandler(() =>
+        HttpResponse.json(
+          { error: { code: 'extraction_job_not_found', message: 'Extraction job was not found.' } },
+          { status: 404 },
+        ),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
+    })
+    expect(admissions).toBe(0)
+    expect(extractionJobPolls).toEqual([{ jobId: SOURCE_EXTRACTION_JOB_ID }])
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('should focus the three-step footer when How it works is activated', async () => {
@@ -890,6 +1085,7 @@ describe('DiscoveryPage', () => {
         {
           body: { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
           contentType: 'application/json',
+          idempotencyKey: expect.stringMatching(CANONICAL_UUID_V4),
         },
       ])
     })

@@ -1102,6 +1102,16 @@ class ExtractionRequestError extends Error {
   }
 }
 
+class ExtractionJobNotFoundError extends Error {
+  constructor() {
+    super('Source Extraction job was not found.')
+    this.name = 'ExtractionJobNotFoundError'
+  }
+}
+
+export const isExtractionJobNotFoundError = (error: unknown): boolean =>
+  error instanceof ExtractionJobNotFoundError
+
 const getFailureFromErrorPayload = (payload: unknown): ExtractionFailure => {
   if (!isRecord(payload)) {
     return UNEXPECTED_RESPONSE_FAILURE
@@ -1269,17 +1279,24 @@ const ensureExpectedResponseStatus = ({
 
 export const admitSourceExtractionJob = async ({
   url,
+  idempotencyKey,
   signal,
 }: {
   readonly url: string
+  readonly idempotencyKey: string
   readonly signal: AbortSignal
 }): Promise<AcceptedSourceExtractionJob> => {
+  if (!CANONICAL_UUID_V4.test(idempotencyKey)) {
+    throw new ExtractionRequestError(UNEXPECTED_RESPONSE_FAILURE)
+  }
+
   const response = await requestExtractionEndpoint({
     endpoint: '/api/extraction-jobs',
     init: {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
       },
       body: JSON.stringify({ url }),
     },
@@ -1314,6 +1331,9 @@ export const getSourceExtractionJob = async ({
     signal,
   })
   const payload = await readJsonPayload({ response, signal })
+  if (response.status === 404) {
+    throw new ExtractionJobNotFoundError()
+  }
   ensureExpectedResponseStatus({ response, payload, expectedStatus: 200 })
 
   try {

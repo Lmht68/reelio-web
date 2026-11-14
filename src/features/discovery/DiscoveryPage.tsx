@@ -3,8 +3,17 @@ import {
   admitSourceExtractionJob,
   getExtractionFailure,
   getSourceExtractionJob,
+  isExtractionJobNotFoundError,
   type ExtractionFailure,
 } from './api/extractions'
+import {
+  clearLatestExtractionJobId,
+  readLatestExtractionJobId,
+  readPendingExtractionIdempotencyKey,
+  writeLatestExtractionJobId,
+  writePendingExtractionIdempotencyKey,
+  clearPendingExtractionIdempotencyKey,
+} from './extractionJobStorage'
 import { ResultBrowser } from './components/ResultBrowser'
 import { TranscriptModal } from './components/TranscriptModal'
 import {
@@ -20,11 +29,20 @@ import './DiscoveryPage.css'
 type DiscoveryState =
   | { status: 'idle' }
   | { status: 'admitting'; submittedUrl: string; requestId: number }
-  | { status: 'queued'; submittedUrl: string; requestId: number; jobId: string }
-  | { status: 'running'; submittedUrl: string; requestId: number; jobId: string }
+  | { status: 'queued'; requestId: number; jobId: string }
+  | { status: 'running'; requestId: number; jobId: string }
   | { status: 'success'; data: DiscoveryData; selectedCategory: MediaCategory }
   | { status: 'empty'; data: DiscoveryData }
-  | { status: 'failure'; submittedUrl: string; failure: ExtractionFailure }
+  | {
+      status: 'failure'
+      failure: ExtractionFailure
+      retry: { kind: 'admission'; submittedUrl: string } | { kind: 'status'; jobId: string }
+    }
+
+type ActiveRequest = {
+  readonly requestId: number
+  readonly controller: AbortController
+}
 
 const waitForPollingDelay = ({
   delayMilliseconds,
@@ -49,6 +67,14 @@ const waitForPollingDelay = ({
   }
 
   return promise
+}
+
+const clearStoredLatestExtractionJobId = (): void => {
+  try {
+    clearLatestExtractionJobId()
+  } catch {
+    return
+  }
 }
 
 type SourceVideoSummaryCardProps = {
@@ -123,9 +149,7 @@ export const DiscoveryPage = () => {
   const howItWorksHeadingRef = useRef<HTMLHeadingElement>(null)
   const isPendingRef = useRef(false)
   const requestIdRef = useRef(0)
-  const activeRequestRef = useRef<{ requestId: number; controller: AbortController } | undefined>(
-    undefined,
-  )
+  const activeRequestRef = useRef<ActiveRequest | undefined>(undefined)
   const isPending =
     discoveryState.status === 'admitting' ||
     discoveryState.status === 'queued' ||
@@ -136,79 +160,177 @@ export const DiscoveryPage = () => {
     setGuidance(undefined)
   }
 
-  const runSourceExtractionJob = useCallback(async (submittedUrl: string): Promise<void> => {
+  const beginRequest = useCallback((): ActiveRequest | undefined => {
     if (isPendingRef.current) {
-      return
+      return undefined
     }
 
     isPendingRef.current = true
     const requestId = requestIdRef.current + 1
     requestIdRef.current = requestId
-    const controller = new AbortController()
-    activeRequestRef.current = { requestId, controller }
-    setDiscoveryState({ status: 'admitting', submittedUrl, requestId })
+    const activeRequest = { requestId, controller: new AbortController() }
+    activeRequestRef.current = activeRequest
+    return activeRequest
+  }, [])
 
-    try {
-      const admittedJob = await admitSourceExtractionJob({ url: submittedUrl, signal: controller.signal })
-      if (activeRequestRef.current?.requestId !== requestId) {
-        return
-      }
+  const finishRequest = useCallback((requestId: number): void => {
+    if (activeRequestRef.current?.requestId === requestId) {
+      isPendingRef.current = false
+      activeRequestRef.current = undefined
+    }
+  }, [])
 
-      setDiscoveryState({
-        status: 'queued',
-        submittedUrl,
-        requestId,
-        jobId: admittedJob.jobId,
-      })
-      await waitForPollingDelay({
-        delayMilliseconds: admittedJob.retryAfterMilliseconds,
-        signal: controller.signal,
-      })
+  const pollSourceExtractionJob = useCallback(
+    async ({
+      jobId,
+      requestId,
+      controller,
+      initialDelayMilliseconds,
+    }: {
+      readonly jobId: string
+      readonly requestId: number
+      readonly controller: AbortController
+      readonly initialDelayMilliseconds: number
+    }): Promise<void> => {
+      try {
+        if (initialDelayMilliseconds > 0) {
+          await waitForPollingDelay({
+            delayMilliseconds: initialDelayMilliseconds,
+            signal: controller.signal,
+          })
+        }
 
-      while (activeRequestRef.current?.requestId === requestId) {
-        const job = await getSourceExtractionJob({ jobId: admittedJob.jobId, signal: controller.signal })
-        if (activeRequestRef.current?.requestId !== requestId) {
+        while (activeRequestRef.current?.requestId === requestId) {
+          const job = await getSourceExtractionJob({ jobId, signal: controller.signal })
+          if (activeRequestRef.current?.requestId !== requestId) {
+            return
+          }
+
+          if (job.status === 'succeeded') {
+            clearStoredLatestExtractionJobId()
+            const selectedCategory = getFirstNonEmptyMediaCategory(job.data.categorizedResults)
+            setDiscoveryState(
+              selectedCategory === undefined
+                ? { status: 'empty', data: job.data }
+                : { status: 'success', data: job.data, selectedCategory },
+            )
+            return
+          }
+
+          setDiscoveryState({
+            status: job.status,
+            requestId,
+            jobId: job.jobId,
+          })
+          await waitForPollingDelay({
+            delayMilliseconds: job.retryAfterMilliseconds,
+            signal: controller.signal,
+          })
+        }
+      } catch (error) {
+        if (controller.signal.aborted || activeRequestRef.current?.requestId !== requestId) {
           return
         }
 
-        if (job.status === 'succeeded') {
-          const selectedCategory = getFirstNonEmptyMediaCategory(job.data.categorizedResults)
-          setDiscoveryState(
-            selectedCategory === undefined
-              ? { status: 'empty', data: job.data }
-              : { status: 'success', data: job.data, selectedCategory },
-          )
+        if (isExtractionJobNotFoundError(error)) {
+          clearStoredLatestExtractionJobId()
+          setDiscoveryState({ status: 'idle' })
           return
         }
 
         setDiscoveryState({
-          status: job.status,
-          submittedUrl,
-          requestId,
-          jobId: job.jobId,
-        })
-        await waitForPollingDelay({
-          delayMilliseconds: job.retryAfterMilliseconds,
-          signal: controller.signal,
+          status: 'failure',
+          failure: getExtractionFailure(error),
+          retry: { kind: 'status', jobId },
         })
       }
-    } catch (error) {
-      if (controller.signal.aborted || activeRequestRef.current?.requestId !== requestId) {
+    },
+    [],
+  )
+
+  const runSourceExtractionJob = useCallback(
+    async (submittedUrl: string): Promise<void> => {
+      const activeRequest = beginRequest()
+      if (activeRequest === undefined) {
         return
       }
 
-      setDiscoveryState({
-        status: 'failure',
-        submittedUrl,
-        failure: getExtractionFailure(error),
-      })
-    } finally {
-      if (activeRequestRef.current?.requestId === requestId) {
-        isPendingRef.current = false
-        activeRequestRef.current = undefined
+      const { requestId, controller } = activeRequest
+      setDiscoveryState({ status: 'admitting', submittedUrl, requestId })
+
+      try {
+        const idempotencyKey =
+          readPendingExtractionIdempotencyKey() ??
+          (() => {
+            if (typeof crypto.randomUUID !== 'function') {
+              throw new Error('The browser cannot generate an idempotency key.')
+            }
+
+            const generatedKey = crypto.randomUUID()
+            writePendingExtractionIdempotencyKey(generatedKey)
+            return generatedKey
+          })()
+        const admittedJob = await admitSourceExtractionJob({
+          url: submittedUrl,
+          idempotencyKey,
+          signal: controller.signal,
+        })
+        if (activeRequestRef.current?.requestId !== requestId) {
+          return
+        }
+
+        writeLatestExtractionJobId(admittedJob.jobId)
+        clearPendingExtractionIdempotencyKey()
+        setDiscoveryState({
+          status: 'queued',
+          requestId,
+          jobId: admittedJob.jobId,
+        })
+        await pollSourceExtractionJob({
+          jobId: admittedJob.jobId,
+          requestId,
+          controller,
+          initialDelayMilliseconds: admittedJob.retryAfterMilliseconds,
+        })
+      } catch (error) {
+        if (controller.signal.aborted || activeRequestRef.current?.requestId !== requestId) {
+          return
+        }
+
+        setDiscoveryState({
+          status: 'failure',
+          failure: getExtractionFailure(error),
+          retry: { kind: 'admission', submittedUrl },
+        })
+      } finally {
+        finishRequest(requestId)
       }
-    }
-  }, [])
+    },
+    [beginRequest, finishRequest, pollSourceExtractionJob],
+  )
+
+  const resumeSourceExtractionJob = useCallback(
+    async (jobId: string): Promise<void> => {
+      const activeRequest = beginRequest()
+      if (activeRequest === undefined) {
+        return
+      }
+
+      const { requestId, controller } = activeRequest
+      setDiscoveryState({ status: 'queued', requestId, jobId })
+      try {
+        await pollSourceExtractionJob({
+          jobId,
+          requestId,
+          controller,
+          initialDelayMilliseconds: 0,
+        })
+      } finally {
+        finishRequest(requestId)
+      }
+    },
+    [beginRequest, finishRequest, pollSourceExtractionJob],
+  )
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -233,9 +355,34 @@ export const DiscoveryPage = () => {
       return
     }
 
-    setUrlValue(discoveryState.submittedUrl)
-    void runSourceExtractionJob(discoveryState.submittedUrl)
+    if (discoveryState.retry.kind === 'admission') {
+      setUrlValue(discoveryState.retry.submittedUrl)
+      void runSourceExtractionJob(discoveryState.retry.submittedUrl)
+      return
+    }
+
+    void resumeSourceExtractionJob(discoveryState.retry.jobId)
   }
+
+  useEffect(() => {
+    let disposed = false
+    try {
+      const jobId = readLatestExtractionJobId()
+      if (jobId !== undefined) {
+        queueMicrotask(() => {
+          if (!disposed) {
+            void resumeSourceExtractionJob(jobId)
+          }
+        })
+      }
+    } catch {
+      return undefined
+    }
+
+    return () => {
+      disposed = true
+    }
+  }, [resumeSourceExtractionJob])
 
   useEffect(
     () => () => {
