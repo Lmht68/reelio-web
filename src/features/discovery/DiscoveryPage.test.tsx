@@ -633,6 +633,59 @@ describe('DiscoveryPage', () => {
     expect(Object.keys(window.localStorage)).toEqual([LATEST_EXTRACTION_JOB_ID_KEY])
   })
 
+
+  it('should recover from capacity admission without exposing backend details', async () => {
+    const user = userEvent.setup()
+    const idempotencyKeys: Array<string | null> = []
+    let attempt = 0
+
+    server.use(
+      http.post('/api/extraction-jobs', ({ request }) => {
+        attempt += 1
+        idempotencyKeys.push(request.headers.get('idempotency-key'))
+        if (attempt === 1) {
+          return HttpResponse.json(
+            {
+              error: {
+                code: 'extraction_capacity_exceeded',
+                message: 'Private scheduler details must stay hidden.',
+              },
+            },
+            { status: 503, headers: { 'Retry-After': '2' } },
+          )
+        }
+
+        return acceptedSourceExtractionJob()
+      }),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user, false)
+
+    const capacityHeading = await screen.findByRole('heading', { name: 'Reelio is at capacity' })
+    const pendingKey = window.localStorage.getItem(PENDING_EXTRACTION_IDEMPOTENCY_KEY)
+
+    expect(capacityHeading).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Too many videos are being processed right now. Wait a moment, then try again.',
+    )
+    expect(screen.queryByText('Private scheduler details must stay hidden.')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Video URL')).toHaveValue(
+      'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+    )
+    expect(screen.getByLabelText('Video URL')).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Discover' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled()
+    expect(pendingKey).toMatch(CANONICAL_UUID_V4)
+
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+
+    expect(
+      await screen.findByRole('heading', { name: 'Never Gonna Give You Up' }),
+    ).toBeInTheDocument()
+    expect(idempotencyKeys).toEqual([pendingKey, pendingKey])
+  })
+
   it('should reuse a pending idempotency key when a failed admission is retried', async () => {
     const user = userEvent.setup()
     const idempotencyKeys: Array<string | null> = []

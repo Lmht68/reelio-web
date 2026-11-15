@@ -33,6 +33,7 @@ export type ExtractionFailure = {
     | 'catalogProvider'
     | 'processing'
     | 'pipelineTimeout'
+    | 'serviceCapacity'
     | 'internal'
     | 'network'
     | 'unexpectedResponse'
@@ -1054,6 +1055,13 @@ const PIPELINE_TIMEOUT_FAILURE = {
   canRetry: true,
 } as const satisfies ExtractionFailure
 
+const SERVICE_CAPACITY_FAILURE = {
+  kind: 'serviceCapacity',
+  heading: 'Reelio is at capacity',
+  guidance: 'Too many videos are being processed right now. Wait a moment, then try again.',
+  canRetry: true,
+} as const satisfies ExtractionFailure
+
 const INTERNAL_FAILURE = {
   kind: 'internal',
   heading: 'Something went wrong while processing the source video',
@@ -1089,6 +1097,7 @@ const DOMAIN_FAILURES: Readonly<Record<string, ExtractionFailure>> = {
   mention_interpretation_failed: PROCESSING_FAILURE,
   invalid_llm_response: PROCESSING_FAILURE,
   pipeline_timeout: PIPELINE_TIMEOUT_FAILURE,
+  extraction_capacity_exceeded: SERVICE_CAPACITY_FAILURE,
   internal_error: INTERNAL_FAILURE,
 }
 
