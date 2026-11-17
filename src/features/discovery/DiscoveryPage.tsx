@@ -217,6 +217,16 @@ export const DiscoveryPage = () => {
             return
           }
 
+          if (job.status === 'failed') {
+            clearStoredLatestExtractionJobId()
+            setDiscoveryState({
+              status: 'failure',
+              failure: job.failure,
+              retry: { kind: 'status', jobId: job.jobId },
+            })
+            return
+          }
+
           setDiscoveryState({
             status: job.status,
             requestId,

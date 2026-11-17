@@ -821,6 +821,37 @@ describe('DiscoveryPage', () => {
     expect(extractionJobPolls).toHaveLength(2)
   })
 
+
+
+  it('should stop polling and render safe failure guidance when a job fails terminally', async () => {
+    const user = userEvent.setup()
+
+    server.use(
+      sourceExtractionJobStatusHandler((jobId) =>
+        HttpResponse.json({
+          job_id: jobId,
+          status: 'failed',
+          error: {
+            code: 'invalid_source',
+            message: 'Backend details must stay hidden',
+          },
+        }),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+    await submitSourceVideo(user)
+
+    expect(
+      await screen.findByRole('heading', { name: 'We can’t use that source video' }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Check the link or try a different source video.',
+    )
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+    expect(extractionJobPolls).toEqual([{ jobId: SOURCE_EXTRACTION_JOB_ID }])
+    expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
+  })
   it('should clear an unavailable restored job without admitting another job', async () => {
     let admissions = 0
     window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)

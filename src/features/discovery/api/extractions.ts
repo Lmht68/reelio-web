@@ -64,6 +64,11 @@ export type SourceExtractionJobStatus =
       readonly jobId: string
       readonly data: DiscoveryData
     }
+  | {
+      readonly status: 'failed'
+      readonly jobId: string
+      readonly failure: ExtractionFailure
+    }
 
 type BackendPlatform = 'youtube' | 'instagram' | 'facebook' | 'tiktok' | 'x'
 type BackendTranscriptMethod = 'youtube_captions' | 'whisper' | 'text_submission'
@@ -1232,6 +1237,14 @@ const parseSourceExtractionJobStatus = ({
       status,
       jobId,
       retryAfterMilliseconds: getRetryAfterMilliseconds(response),
+    }
+  }
+
+  if (status === 'failed') {
+    return {
+      status,
+      jobId,
+      failure: getFailureFromErrorPayload(job),
     }
   }
 
