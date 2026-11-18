@@ -852,7 +852,7 @@ describe('DiscoveryPage', () => {
     expect(extractionJobPolls).toEqual([{ jobId: SOURCE_EXTRACTION_JOB_ID }])
     expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
   })
-  it('should clear an unavailable restored job without admitting another job', async () => {
+  it('should restore a usable form when a saved job is unavailable', async () => {
     let admissions = 0
     window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)
 
@@ -871,12 +871,62 @@ describe('DiscoveryPage', () => {
 
     render(<DiscoveryPage />)
 
-    await waitFor(() => {
-      expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
-    })
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'That discovery is no longer available. Paste the video link again to start a new discovery.',
+    )
+    expect(window.localStorage.getItem(LATEST_EXTRACTION_JOB_ID_KEY)).toBeNull()
     expect(admissions).toBe(0)
+    expect(extractionJobSubmissions).toHaveLength(0)
     expect(extractionJobPolls).toEqual([{ jobId: SOURCE_EXTRACTION_JOB_ID }])
+    expect(screen.getByLabelText('Video URL')).toBeEnabled()
+    expect(screen.getByLabelText('Video URL')).not.toHaveAttribute('aria-invalid')
+    expect(screen.getByRole('button', { name: 'Discover' })).toBeEnabled()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
+  })
+
+  it('should clear unavailable-job recovery guidance when the video URL changes', async () => {
+    const user = userEvent.setup()
+    window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)
+
+    server.use(
+      sourceExtractionJobStatusHandler(() =>
+        HttpResponse.json(
+          { error: { code: 'extraction_job_not_found', message: 'Extraction job was not found.' } },
+          { status: 404 },
+        ),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+
+    await screen.findByRole('status')
+    await user.type(screen.getByLabelText('Video URL'), 'h')
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('should clear unavailable-job recovery guidance when the form is submitted', async () => {
+    const user = userEvent.setup()
+    window.localStorage.setItem(LATEST_EXTRACTION_JOB_ID_KEY, SOURCE_EXTRACTION_JOB_ID)
+
+    server.use(
+      sourceExtractionJobStatusHandler(() =>
+        HttpResponse.json(
+          { error: { code: 'extraction_job_not_found', message: 'Extraction job was not found.' } },
+          { status: 404 },
+        ),
+      ),
+    )
+
+    render(<DiscoveryPage />)
+
+    await screen.findByRole('status')
+    await user.click(screen.getByRole('button', { name: 'Discover' }))
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(extractionJobSubmissions).toHaveLength(0)
   })
 
   it('should focus the three-step footer when How it works is activated', async () => {

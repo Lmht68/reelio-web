@@ -144,6 +144,7 @@ const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryC
 export const DiscoveryPage = () => {
   const [urlValue, setUrlValue] = useState('')
   const [guidance, setGuidance] = useState<string>()
+  const [unavailableJobMessage, setUnavailableJobMessage] = useState<string>()
   const [discoveryState, setDiscoveryState] = useState<DiscoveryState>({ status: 'idle' })
   const inputRef = useRef<HTMLInputElement>(null)
   const howItWorksHeadingRef = useRef<HTMLHeadingElement>(null)
@@ -158,6 +159,7 @@ export const DiscoveryPage = () => {
   const handleUrlChange = (value: string) => {
     setUrlValue(value)
     setGuidance(undefined)
+    setUnavailableJobMessage(undefined)
   }
 
   const beginRequest = useCallback((): ActiveRequest | undefined => {
@@ -244,6 +246,9 @@ export const DiscoveryPage = () => {
 
         if (isExtractionJobNotFoundError(error)) {
           clearStoredLatestExtractionJobId()
+          setUnavailableJobMessage(
+            'That discovery is no longer available. Paste the video link again to start a new discovery.',
+          )
           setDiscoveryState({ status: 'idle' })
           return
         }
@@ -350,6 +355,7 @@ export const DiscoveryPage = () => {
     }
 
     const validation = validateSourceVideoUrl(urlValue)
+    setUnavailableJobMessage(undefined)
     if (!validation.valid) {
       setGuidance(validation.message)
       inputRef.current?.focus()
@@ -497,6 +503,11 @@ export const DiscoveryPage = () => {
                 <span>.</span>
                 <span>.</span>
               </span>
+            </p>
+          )}
+          {unavailableJobMessage === undefined ? null : (
+            <p className="discovery-result_status" role="status">
+              {unavailableJobMessage}
             </p>
           )}
           {discoveryState.status === 'success' || discoveryState.status === 'empty' ? (
