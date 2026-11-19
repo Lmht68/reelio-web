@@ -18,12 +18,26 @@ npm run dev
 ```
 
 Vite proxies relative `/api/` requests to `http://127.0.0.1:8181` during development.
-Start the backend API on that address before exercising frontend API flows.
+Start the backend API and worker on that deployment before exercising Discovery flows.
 
 Create the production browser bundle with:
 
 ```sh
 npm run build
+```
+
+## Browser lifecycle smoke
+
+Install Chromium once for the Playwright browser runner:
+
+```sh
+npx playwright install chromium
+```
+
+Run the deterministic rendered-browser Extraction Job lifecycle smoke with:
+
+```sh
+npm run smoke:browser
 ```
 
 ## Production image
@@ -70,7 +84,7 @@ Remove a direct-run container with `docker rm --force reelio-frontend`.
 
 ## Compose deployment
 
-Start the backend first.
+Deploy the backend API and worker before deploying the polling frontend.
 The backend Compose project is named `reelio`, so its default Docker network is `reelio_default` and its API service is reachable on that network as `api:8181`.
 Confirm that the network exists before starting the frontend:
 
@@ -121,8 +135,9 @@ Validate real proxying through the frontend without invoking external providers:
 
 ```sh
 curl --include \
-  --request POST http://127.0.0.1:4174/api/extractions \
+  --request POST http://127.0.0.1:4174/api/extraction-jobs \
   --header 'Content-Type: application/json' \
+  --header 'Idempotency-Key: 00000000-0000-4000-8000-000000000001' \
   --data '{}'
 ```
 
@@ -151,6 +166,9 @@ REELIO_FRONTEND_IMAGE_TAG=2026-10-25.1 docker compose up --detach --no-deps --wa
 ```
 
 Keep the prior tag available for rollback.
+
+Keep the backend API and worker on the durable asynchronous contract during a frontend rollout or rollback.
+Frontend rollback remains safe while that compatible backend continues to serve admitted jobs and status polling.
 A rollback does not rebuild the image:
 
 ```sh
