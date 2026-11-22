@@ -10,7 +10,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "smoke:production": "node tests/deployment/production-smoke.mjs",
-    "smoke:browser": "playwright test"
+    "smoke:browser": "playwright test",
+    "smoke:live": "playwright test --config playwright.live.config.ts"
   },
   "dependencies": {
     "react": "^19.3.1",

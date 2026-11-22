@@ -40,6 +40,25 @@ Run the deterministic rendered-browser Extraction Job lifecycle smoke with:
 npm run smoke:browser
 ```
 
+## Deployed browser smoke
+
+`npm run smoke:live` is opt-in and never starts a local frontend server.
+It requires an externally gated deployed frontend origin, Chromium, and an approved fresh public Source.
+The Source must run long enough for the smoke to close and reopen the page in the same browser context before the job reaches a terminal state.
+The frontend origin must be a credential-free HTTP(S) origin.
+Keep the Source private by entering it without shell echo:
+
+```sh
+export REELIO_LIVE_FRONTEND_SMOKE=1
+export REELIO_LIVE_FRONTEND_BASE_URL=https://<gated-frontend-origin>
+read -rs -p 'Approved fresh public source URL: ' REELIO_LIVE_SOURCE_URL
+printf '\n'
+export REELIO_LIVE_SOURCE_URL
+npm run smoke:live
+```
+
+The smoke requires one `POST /api/extraction-jobs`, resumed `GET /api/extraction-jobs/{job_id}` polling, and no synchronous submission request.
+
 ## Production image
 
 The production image builds the Vite bundle in a Node build stage and serves only the static bundle plus Nginx at runtime.
