@@ -209,4 +209,4 @@ Run the deterministic image-level smoke test after Docker changes:
 npm run smoke:production
 ```
 
-The harness builds the production image once, verifies the default and runtime-overridden backend upstreams, waits for Docker health, checks SPA fallback and cache headers, preserves proxied request and error details, confirms the 65-second upstream response, and removes only its uniquely named test resources.
+The harness builds the production image once, verifies the default and runtime-overridden backend upstreams, waits for Docker health, checks SPA fallback and cache headers, preserves proxied request and error details, and removes only its uniquely named test resources.

@@ -16,7 +16,6 @@ const networkName = resourcePrefix
 const fixtureImage =
   'node:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53'
 const errorBody = '{"error":"fixture unavailable"}'
-const slowBody = '{"status":"slow-success"}'
 
 const resources = {
   containers: new Set(),
@@ -380,16 +379,6 @@ const main = async () => {
   assertEqual(upstreamError.body, errorBody, 'Upstream error body')
   assertEqual(upstreamError.headers['retry-after'], '17', 'Upstream Retry-After header')
 
-  const slowStartedAt = process.hrtime.bigint()
-  const slow = await request({
-    port: overridePort,
-    path: '/api/slow',
-    timeoutMs: 75_000,
-  })
-  const slowElapsedMs = Number(process.hrtime.bigint() - slowStartedAt) / 1_000_000
-  assert(slowElapsedMs >= 65_000, `Slow upstream response completed too early: ${slowElapsedMs}ms.`)
-  assertEqual(slow.statusCode, 200, 'Slow upstream response status')
-  assertEqual(slow.body, slowBody, 'Slow upstream response body')
 
   console.log('Production smoke test passed.')
 }

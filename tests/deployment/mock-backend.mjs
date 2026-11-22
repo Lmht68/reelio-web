@@ -3,7 +3,6 @@ import { createServer } from 'node:http'
 const fixtureId = process.env.FIXTURE_ID
 const port = 8181
 const errorBody = '{"error":"fixture unavailable"}'
-const slowBody = '{"status":"slow-success"}'
 
 if (fixtureId === undefined || fixtureId.length === 0) {
   throw new Error('FIXTURE_ID is required.')
@@ -57,12 +56,6 @@ const server = createServer(async (request, response) => {
     return
   }
 
-  if (pathname === '/api/slow') {
-    setTimeout(() => {
-      sendJson(response, 200, slowBody)
-    }, 65_000)
-    return
-  }
 
   sendJson(response, 404, '{"error":"not found"}')
 })

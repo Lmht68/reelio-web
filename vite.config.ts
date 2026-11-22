@@ -1,6 +1,6 @@
-/// <reference types="vitest/config" />
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { configDefaults } from 'vitest/config'
 
 export default defineConfig({
   plugins: [react()],
@@ -19,6 +19,7 @@ export default defineConfig({
         url: 'http://localhost/',
       },
     },
+    exclude: [...configDefaults.exclude, 'tests/browser/**'],
     setupFiles: './src/test/setup.ts',
   },
 })
