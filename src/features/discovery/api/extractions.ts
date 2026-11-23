@@ -681,7 +681,6 @@ const mapSourceVideo = (source: BackendSource): SourceVideoSummary => {
   }
 
   const title = source.title.trim()
-  const channel = source.channel.trim()
 
   return {
     canonicalUrl: source.url,
@@ -690,7 +689,6 @@ const mapSourceVideo = (source: BackendSource): SourceVideoSummary => {
     description: source.description,
     durationSeconds: source.duration_seconds,
     ...(title === '' ? {} : { title }),
-    ...(channel === '' ? {} : { channel }),
   }
 }
 
@@ -975,16 +973,6 @@ const parseExtractionResponse = (value: unknown): DiscoveryData => {
   return {
     market: response.market,
     sourceVideo: mapSourceVideo(response.source),
-    transcript: {
-      text: response.transcript.text,
-      language: response.transcript.language,
-      acquisitionMethod:
-        response.transcript.method === 'youtube_captions'
-          ? 'youtubeCaptions'
-          : response.transcript.method === 'whisper'
-            ? 'whisper'
-            : 'textSubmission',
-    },
     statistics: mapStatistics(response.statistics),
     categorizedResults: mapCategorizedResults(response.results),
   }

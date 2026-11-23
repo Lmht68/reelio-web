@@ -94,8 +94,13 @@ test('should restore deployed extraction work when the page is reopened in one b
   await expect(restoredPage.getByRole('status')).toContainText(
     /Waiting to start|Finding what’s mentioned/u,
   )
-  await expect(restoredPage.locator('.source-video-summary')).toBeVisible()
-  await expect(restoredPage.getByRole('button', { name: 'Read transcript' })).toBeEnabled()
+  const sourceIdentity = restoredPage.locator('.source-video-identity')
+  await expect(sourceIdentity).toBeVisible()
+  await expect(sourceIdentity.getByRole('heading')).toBeVisible()
+  const platformLabel = sourceIdentity.getByText(/^(?:YouTube|Instagram|Facebook|TikTok|X)$/u)
+  await expect(platformLabel).toHaveCount(1)
+  await expect(platformLabel).toBeVisible()
+  await expect(sourceIdentity.getByRole('button', { name: 'Read transcript' })).toHaveCount(0)
   expect(admissionRequestCount).toBe(1)
   expect(synchronousSubmissionRequestCount).toBe(0)
   expect(statusRequestJobIds).toContain(admittedJobId)

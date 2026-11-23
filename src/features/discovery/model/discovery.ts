@@ -5,13 +5,6 @@ export type SourceVideoSummary = {
   readonly description: string
   readonly durationSeconds: number
   readonly title?: string
-  readonly channel?: string
-}
-
-export type TranscriptData = {
-  readonly text: string
-  readonly language: string
-  readonly acquisitionMethod: 'youtubeCaptions' | 'whisper' | 'textSubmission'
 }
 
 export type ResultCounts = {
@@ -182,7 +175,6 @@ export type CategorizedMediaResults = {
 export type DiscoveryData = {
   readonly market: string
   readonly sourceVideo: SourceVideoSummary
-  readonly transcript: TranscriptData
   readonly statistics: ExtractionStatistics
   readonly categorizedResults: CategorizedMediaResults
 }

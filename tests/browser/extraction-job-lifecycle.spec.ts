@@ -171,7 +171,20 @@ test.describe('Discovery extraction job lifecycle', () => {
     await page.reload()
     await expect(page.getByRole('status')).toContainText('Waiting to start')
     await expect(page.getByRole('status')).toContainText('Finding what’s mentioned')
-    await expect(page.getByRole('heading', { name: SOURCE_TITLE })).toBeVisible()
+    const sourceIdentity = page.locator('.source-video-identity')
+    await expect(sourceIdentity).toBeVisible()
+    await expect(sourceIdentity.getByRole('link', { name: SOURCE_TITLE })).toHaveAttribute(
+      'href',
+      SOURCE_URL,
+    )
+    await expect(sourceIdentity.getByText('YouTube', { exact: true })).toBeVisible()
+    await expect(
+      sourceIdentity.getByText('by Browser smoke channel · YouTube'),
+    ).toHaveCount(0)
+    await expect(
+      sourceIdentity.getByRole('img', { name: 'Source video thumbnail unavailable' }),
+    ).toHaveCount(0)
+    await expect(sourceIdentity.getByRole('button', { name: 'Read transcript' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Dune, 2021, score 8.0, open details' })).toBeVisible()
 
     expect(admissionCount).toBe(1)
@@ -179,13 +192,6 @@ test.describe('Discovery extraction job lifecycle', () => {
     expect(unexpectedRequests).toEqual([])
     await assertNoHorizontalOverflow(page)
 
-    const transcriptButton = page.getByRole('button', { name: 'Read transcript' })
-    await transcriptButton.focus()
-    await page.keyboard.press('Enter')
-    await expect(page.getByRole('dialog', { name: 'Transcript' })).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(page.getByRole('dialog', { name: 'Transcript' })).toHaveCount(0)
-    await expect(transcriptButton).toBeFocused()
   })
 
   test('should hide private terminal failure text when the job rejects its source', async ({ page }) => {

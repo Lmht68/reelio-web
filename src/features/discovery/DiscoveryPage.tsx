@@ -15,14 +15,12 @@ import {
   clearPendingExtractionIdempotencyKey,
 } from './extractionJobStorage'
 import { ResultBrowser } from './components/ResultBrowser'
-import { TranscriptModal } from './components/TranscriptModal'
 import {
   getFirstNonEmptyMediaCategory,
   validateSourceVideoUrl,
   type DiscoveryData,
   type MediaCategory,
   type SourceVideoSummary,
-  type TranscriptData,
 } from './model/discovery'
 import './DiscoveryPage.css'
 
@@ -77,66 +75,26 @@ const clearStoredLatestExtractionJobId = (): void => {
   }
 }
 
-type SourceVideoSummaryCardProps = {
+type SourceVideoIdentityProps = {
   sourceVideo: SourceVideoSummary
-  transcript: TranscriptData
 }
 
-const SourceVideoSummaryCard = ({ sourceVideo, transcript }: SourceVideoSummaryCardProps) => {
-  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false)
-  const transcriptOpenerRef = useRef<HTMLButtonElement>(null)
-  const handleCloseTranscript = useCallback(() => {
-    setIsTranscriptOpen(false)
-  }, [])
-
+const SourceVideoIdentity = ({ sourceVideo }: SourceVideoIdentityProps) => {
   const title = sourceVideo.title?.trim() || 'Source video'
 
   return (
-    <section className="source-video-summary" aria-labelledby="source-video-summary-heading">
-      <div
-        className="source-video-summary_placeholder"
-        role="img"
-        aria-label="Source video thumbnail unavailable"
-      >
-        <svg aria-hidden="true" viewBox="0 0 24 24">
-          <rect x="3" y="5" width="18" height="14" rx="2" />
-          <path d="m10 9 5 3-5 3Z" />
-        </svg>
-      </div>
-      <div className="source-video-summary_content">
-        <h2 id="source-video-summary-heading">
-          <a
-            className="source-video-summary_title-link"
-            href={sourceVideo.canonicalUrl}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {title}
-          </a>
-        </h2>
-        <p className="source-video-summary_metadata">
-          {sourceVideo.channel === undefined
-            ? sourceVideo.platformLabel
-            : `by ${sourceVideo.channel} · ${sourceVideo.platformLabel}`}
-        </p>
-      </div>
-      <button
-        ref={transcriptOpenerRef}
-        className="source-video-summary_transcript-button"
-        type="button"
-        aria-haspopup="dialog"
-        aria-expanded={isTranscriptOpen}
-        onClick={() => setIsTranscriptOpen(true)}
-      >
-        Read transcript
-      </button>
-      {isTranscriptOpen ? (
-        <TranscriptModal
-          transcript={transcript}
-          openerRef={transcriptOpenerRef}
-          onClose={handleCloseTranscript}
-        />
-      ) : null}
+    <section className="source-video-identity" aria-labelledby="source-video-identity-heading">
+      <h2 id="source-video-identity-heading">
+        <a
+          className="source-video-identity_title-link"
+          href={sourceVideo.canonicalUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {title}
+        </a>
+      </h2>
+      <p className="source-video-identity_platform">{sourceVideo.platformLabel}</p>
     </section>
   )
 }
@@ -512,10 +470,7 @@ export const DiscoveryPage = () => {
           )}
           {discoveryState.status === 'success' || discoveryState.status === 'empty' ? (
             <>
-              <SourceVideoSummaryCard
-                sourceVideo={discoveryState.data.sourceVideo}
-                transcript={discoveryState.data.transcript}
-              />
+              <SourceVideoIdentity sourceVideo={discoveryState.data.sourceVideo} />
               {discoveryState.status === 'success' ? (
                 <ResultBrowser
                   categorizedResults={discoveryState.data.categorizedResults}
@@ -581,7 +536,7 @@ export const DiscoveryPage = () => {
                 <rect x="3" y="16" width="7" height="5" rx="1" />
               </svg>
               <h3>Explore the results</h3>
-              <p>Browse covers, open details, and read the transcript.</p>
+              <p>Browse covers and open details.</p>
             </li>
           </ol>
         </div>
